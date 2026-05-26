@@ -1,0 +1,47 @@
+name: AletefaqClientPortal
+
+options:
+  minimumXcodeGenVersion: 2.38.0
+  deploymentTarget:
+    iOS: "16.0"
+
+targets:
+  AletefaqClientPortal:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: AletefaqClientPortal
+        excludes:
+          - "**/.DS_Store"
+    settings:
+      base:
+        PRODUCT_NAME: AletefaqClientPortal
+        PRODUCT_BUNDLE_IDENTIFIER: com.aletefaq.clientportal
+        CODE_SIGN_STYLE: Automatic
+        SWIFT_VERSION: 5.9
+        IPHONEOS_DEPLOYMENT_TARGET: 16.0
+        INFOPLIST_FILE: AletefaqClientPortal/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: 0.1.0
+    info:
+      path: AletefaqClientPortal/Info.plist
+      properties:
+        CFBundleDisplayName: Aletefaq Client
+        UILaunchScreen:
+          UIColorName: ""
+        UIUserInterfaceStyle: Light
+        API_BASE_URL: http://localhost:3000
+        SUPABASE_URL: http://localhost:54321
+        SUPABASE_ANON_KEY: replace-with-supabase-anon-key
+
+schemes:
+  AletefaqClientPortal:
+    build:
+      targets:
+        AletefaqClientPortal: all
+    run:
+      config: Debug
+    archive:
+      config: Release

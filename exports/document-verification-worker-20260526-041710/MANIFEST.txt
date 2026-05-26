@@ -1,0 +1,20 @@
+﻿Export root: C:\Users\alkha\Desktop\OneDrive\Documents\Playground\legal-platform\exports\document-verification-worker-20260526-041710
+Created: 2026-05-26T04:17:10.9047283+03:00
+
+Files:
+- src/lib/api/document-verification-worker.ts
+- src/lib/api/document-upload-security.ts
+- src/app/api/v1/documents/[documentId]/signed-url/route.ts
+- tests/document-verification-worker.test.ts
+- tests/document-upload-security.test.ts
+- docs/SECURITY.md
+- docs/API_CONTRACTS.md
+
+SHA256:
+94868FCD9D69BC1FFB4672597851EEFA013AD49460ED4A1162400F65498A2488  src/lib/api/document-verification-worker.ts
+D47DA39C8B5382157409F78DB55310DCD56303D0CDC2864EFE34FB0501139F63  src/lib/api/document-upload-security.ts
+6578EC8FFAE171CE3CB9B8EA0E2C9814844253C3D9CA0F1B96199D80B038B23A  src/app/api/v1/documents/[documentId]/signed-url/route.ts
+EF0E765DC6793A74B9D3D2BB7FC3EE8DDF2881AAD164A6823E9623057784BCE0  tests/document-verification-worker.test.ts
+A155070F03AB74B3D0E5AA7A4C5F73881A916030F966ED56EA660D5740997192  tests/document-upload-security.test.ts
+8F0878F909290C4FDD72848D529765CAC2BC42390F6B7863B29E5B7E72178EB2  docs/SECURITY.md
+ADB20155594F0B3AD87F7B96E99D70E3271E6C609FA707252BDE7ED50BB7F461  docs/API_CONTRACTS.md
