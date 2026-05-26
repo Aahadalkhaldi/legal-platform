@@ -8,8 +8,47 @@ type ApiCallState = {
   body: unknown;
 } | null;
 
+type DebugState = {
+  supabaseUrlExists: boolean;
+  supabaseHost: string;
+  supabaseUrlLooksValid: boolean;
+  anonKeyExists: boolean;
+  anonKeyLength: number;
+  createClientSucceeded: boolean;
+  createClientError: string | null;
+  attemptedAuthTokenFetch: boolean;
+  attemptedFetchTargets: string[];
+  fetchNetworkExceptionMessage: string | null;
+  preSignInRuntimeError: string | null;
+};
+
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+
+function parseSupabaseHost(url: string): { host: string; isValid: boolean } {
+  try {
+    const parsed = new URL(url);
+    const looksSupabaseHost = parsed.host.endsWith(".supabase.co");
+    return {
+      host: parsed.host,
+      isValid: parsed.protocol === "https:" && looksSupabaseHost
+    };
+  } catch {
+    return {
+      host: "<invalid-url>",
+      isValid: false
+    };
+  }
+}
+
+function safeTargetLabel(input: string): string {
+  try {
+    const parsed = new URL(input);
+    return `${parsed.host}${parsed.pathname}`;
+  } catch {
+    return input;
+  }
+}
 
 function parseMaybeJson(text: string): unknown {
   try {
@@ -25,12 +64,44 @@ export default function LoginTestPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [apiResult, setApiResult] = useState<ApiCallState>(null);
+  const [debug, setDebug] = useState<DebugState>({
+    supabaseUrlExists: Boolean(supabaseUrl),
+    supabaseHost: parseSupabaseHost(supabaseUrl).host,
+    supabaseUrlLooksValid: parseSupabaseHost(supabaseUrl).isValid,
+    anonKeyExists: Boolean(supabaseAnonKey),
+    anonKeyLength: supabaseAnonKey.length,
+    createClientSucceeded: false,
+    createClientError: null,
+    attemptedAuthTokenFetch: false,
+    attemptedFetchTargets: [],
+    fetchNetworkExceptionMessage: null,
+    preSignInRuntimeError: null
+  });
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
     setError(null);
     setApiResult(null);
+    const parsed = parseSupabaseHost(supabaseUrl);
+    const attemptedTargets: string[] = [];
+    let attemptedAuthTokenFetch = false;
+    let fetchNetworkExceptionMessage: string | null = null;
+    let signInAttempted = false;
+
+    setDebug({
+      supabaseUrlExists: Boolean(supabaseUrl),
+      supabaseHost: parsed.host,
+      supabaseUrlLooksValid: parsed.isValid,
+      anonKeyExists: Boolean(supabaseAnonKey),
+      anonKeyLength: supabaseAnonKey.length,
+      createClientSucceeded: false,
+      createClientError: null,
+      attemptedAuthTokenFetch: false,
+      attemptedFetchTargets: [],
+      fetchNetworkExceptionMessage: null,
+      preSignInRuntimeError: null
+    });
 
     try {
       if (!supabaseUrl || !supabaseAnonKey) {
@@ -39,13 +110,61 @@ export default function LoginTestPage() {
         );
       }
 
-      const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false
-        }
-      });
+      let supabase;
+      try {
+        const wrappedFetch: typeof fetch = async (input, init) => {
+          const target =
+            typeof input === "string"
+              ? input
+              : input instanceof URL
+                ? input.toString()
+                : input.url;
 
+          const safeTarget = safeTargetLabel(target);
+          attemptedTargets.push(safeTarget);
+          if (safeTarget.includes("/auth/v1/token")) {
+            attemptedAuthTokenFetch = true;
+          }
+
+          try {
+            return await fetch(input, init);
+          } catch (fetchError) {
+            fetchNetworkExceptionMessage =
+              fetchError instanceof Error
+                ? fetchError.message
+                : "Unknown fetch exception";
+            throw fetchError;
+          }
+        };
+
+        supabase = createClient(supabaseUrl, supabaseAnonKey, {
+          auth: {
+            autoRefreshToken: false,
+            persistSession: false
+          },
+          global: {
+            fetch: wrappedFetch
+          }
+        });
+
+        setDebug((prev) => ({
+          ...prev,
+          createClientSucceeded: true
+        }));
+      } catch (createClientError) {
+        const message =
+          createClientError instanceof Error
+            ? createClientError.message
+            : "Unknown createClient() error";
+        setDebug((prev) => ({
+          ...prev,
+          createClientSucceeded: false,
+          createClientError: message
+        }));
+        throw new Error(`createClient() failed: ${message}`);
+      }
+
+      signInAttempted = true;
       const { data, error: signInError } = await supabase.auth.signInWithPassword({
         email,
         password
@@ -74,13 +193,29 @@ export default function LoginTestPage() {
         httpStatus: response.status,
         body: parsedBody
       });
+      setDebug((prev) => ({
+        ...prev,
+        attemptedAuthTokenFetch,
+        attemptedFetchTargets: attemptedTargets,
+        fetchNetworkExceptionMessage
+      }));
 
       if (!response.ok) {
         throw new Error(`API call failed with status ${response.status}.`);
       }
     } catch (submitError) {
+      const message =
+        submitError instanceof Error ? submitError.message : "Unknown error.";
+      const preSignInRuntimeError = signInAttempted ? null : message;
+      setDebug((prev) => ({
+        ...prev,
+        attemptedAuthTokenFetch,
+        attemptedFetchTargets: attemptedTargets,
+        fetchNetworkExceptionMessage,
+        preSignInRuntimeError
+      }));
       setError(
-        submitError instanceof Error ? submitError.message : "Unknown error."
+        message
       );
     } finally {
       setLoading(false);
@@ -99,6 +234,48 @@ export default function LoginTestPage() {
             This page uses <code>NEXT_PUBLIC_SUPABASE_URL</code> and{" "}
             <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code> only.
           </p>
+
+          <div
+            style={{
+              marginBottom: 20,
+              border: "1px solid #cbd5e1",
+              background: "#f8fafc",
+              borderRadius: 8,
+              padding: 12
+            }}
+          >
+            <strong>Temporary Debug (safe)</strong>
+            <ul style={{ margin: "8px 0 0", paddingInlineStart: 18 }}>
+              <li>NEXT_PUBLIC_SUPABASE_URL exists: {String(debug.supabaseUrlExists)}</li>
+              <li>Parsed Supabase host: {debug.supabaseHost}</li>
+              <li>URL format looks valid (https + *.supabase.co): {String(debug.supabaseUrlLooksValid)}</li>
+              <li>NEXT_PUBLIC_SUPABASE_ANON_KEY exists: {String(debug.anonKeyExists)}</li>
+              <li>Anon key length: {debug.anonKeyLength}</li>
+              <li>createClient() succeeds: {String(debug.createClientSucceeded)}</li>
+              <li>createClient() error: {debug.createClientError ?? "<none>"}</li>
+              <li>Auth token fetch attempted (/auth/v1/token): {String(debug.attemptedAuthTokenFetch)}</li>
+              <li>Fetch/network exception: {debug.fetchNetworkExceptionMessage ?? "<none>"}</li>
+              <li>Pre-signIn runtime error: {debug.preSignInRuntimeError ?? "<none>"}</li>
+            </ul>
+            {debug.attemptedFetchTargets.length > 0 ? (
+              <details style={{ marginTop: 8 }}>
+                <summary>Attempted fetch targets (host + path only)</summary>
+                <pre
+                  style={{
+                    whiteSpace: "pre-wrap",
+                    background: "#0f172a",
+                    color: "#e2e8f0",
+                    borderRadius: 8,
+                    padding: 12,
+                    overflowX: "auto",
+                    marginTop: 8
+                  }}
+                >
+                  {JSON.stringify(debug.attemptedFetchTargets, null, 2)}
+                </pre>
+              </details>
+            ) : null}
+          </div>
 
           <form onSubmit={onSubmit} style={{ display: "grid", gap: 12 }}>
             <label style={{ display: "grid", gap: 6 }}>
