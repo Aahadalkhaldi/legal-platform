@@ -1,7 +1,7 @@
 "use client";
 
-import { FormEvent, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { FormEvent, useMemo, useState } from "react";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 type ApiCallState = {
   httpStatus: number;
@@ -9,6 +9,7 @@ type ApiCallState = {
 } | null;
 
 type DebugState = {
+  submitHandlerReached: boolean;
   supabaseUrlExists: boolean;
   supabaseHost: string;
   supabaseUrlLooksValid: boolean;
@@ -20,6 +21,12 @@ type DebugState = {
   attemptedFetchTargets: string[];
   fetchNetworkExceptionMessage: string | null;
   preSignInRuntimeError: string | null;
+};
+
+type ClientInitState = {
+  client: SupabaseClient | null;
+  createClientSucceeded: boolean;
+  createClientError: string | null;
 };
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
@@ -59,19 +66,55 @@ function parseMaybeJson(text: string): unknown {
 }
 
 export default function LoginTestPage() {
+  const parsedSupabase = useMemo(() => parseSupabaseHost(supabaseUrl), []);
+  const clientInit = useMemo<ClientInitState>(() => {
+    if (!supabaseUrl || !supabaseAnonKey) {
+      return {
+        client: null,
+        createClientSucceeded: false,
+        createClientError:
+          "Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY."
+      };
+    }
+
+    try {
+      const client = createClient(supabaseUrl, supabaseAnonKey, {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false
+        }
+      });
+      return {
+        client,
+        createClientSucceeded: true,
+        createClientError: null
+      };
+    } catch (createClientError) {
+      return {
+        client: null,
+        createClientSucceeded: false,
+        createClientError:
+          createClientError instanceof Error
+            ? createClientError.message
+            : "Unknown createClient() error"
+      };
+    }
+  }, []);
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [apiResult, setApiResult] = useState<ApiCallState>(null);
   const [debug, setDebug] = useState<DebugState>({
+    submitHandlerReached: false,
     supabaseUrlExists: Boolean(supabaseUrl),
-    supabaseHost: parseSupabaseHost(supabaseUrl).host,
-    supabaseUrlLooksValid: parseSupabaseHost(supabaseUrl).isValid,
+    supabaseHost: parsedSupabase.host,
+    supabaseUrlLooksValid: parsedSupabase.isValid,
     anonKeyExists: Boolean(supabaseAnonKey),
     anonKeyLength: supabaseAnonKey.length,
-    createClientSucceeded: false,
-    createClientError: null,
+    createClientSucceeded: clientInit.createClientSucceeded,
+    createClientError: clientInit.createClientError,
     attemptedAuthTokenFetch: false,
     attemptedFetchTargets: [],
     fetchNetworkExceptionMessage: null,
@@ -83,25 +126,65 @@ export default function LoginTestPage() {
     setLoading(true);
     setError(null);
     setApiResult(null);
-    const parsed = parseSupabaseHost(supabaseUrl);
     const attemptedTargets: string[] = [];
-    let attemptedAuthTokenFetch = false;
     let fetchNetworkExceptionMessage: string | null = null;
     let signInAttempted = false;
+    const originalFetch = window.fetch.bind(window);
+    const wrappedWindowFetch: typeof fetch = async (input, init) => {
+      const target =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
 
-    setDebug({
+      const safeTarget = safeTargetLabel(target);
+      attemptedTargets.push(safeTarget);
+      setDebug((prev) => ({
+        ...prev,
+        attemptedFetchTargets: [...attemptedTargets]
+      }));
+
+      if (safeTarget.includes("/auth/v1/token")) {
+        setDebug((prev) => ({
+          ...prev,
+          attemptedAuthTokenFetch: true
+        }));
+      }
+
+      try {
+        return await originalFetch(input, init);
+      } catch (fetchError) {
+        fetchNetworkExceptionMessage =
+          fetchError instanceof Error
+            ? fetchError.message
+            : "Unknown fetch exception";
+        setDebug((prev) => ({
+          ...prev,
+          fetchNetworkExceptionMessage
+        }));
+        throw fetchError;
+      }
+    };
+
+    window.fetch = wrappedWindowFetch;
+    const parsed = parseSupabaseHost(supabaseUrl);
+
+    setDebug((prev) => ({
+      ...prev,
+      submitHandlerReached: true,
       supabaseUrlExists: Boolean(supabaseUrl),
       supabaseHost: parsed.host,
       supabaseUrlLooksValid: parsed.isValid,
       anonKeyExists: Boolean(supabaseAnonKey),
       anonKeyLength: supabaseAnonKey.length,
-      createClientSucceeded: false,
-      createClientError: null,
+      createClientSucceeded: clientInit.createClientSucceeded,
+      createClientError: clientInit.createClientError,
       attemptedAuthTokenFetch: false,
       attemptedFetchTargets: [],
       fetchNetworkExceptionMessage: null,
       preSignInRuntimeError: null
-    });
+    }));
 
     try {
       if (!supabaseUrl || !supabaseAnonKey) {
@@ -110,68 +193,31 @@ export default function LoginTestPage() {
         );
       }
 
-      let supabase;
-      try {
-        const wrappedFetch: typeof fetch = async (input, init) => {
-          const target =
-            typeof input === "string"
-              ? input
-              : input instanceof URL
-                ? input.toString()
-                : input.url;
-
-          const safeTarget = safeTargetLabel(target);
-          attemptedTargets.push(safeTarget);
-          if (safeTarget.includes("/auth/v1/token")) {
-            attemptedAuthTokenFetch = true;
-          }
-
-          try {
-            return await fetch(input, init);
-          } catch (fetchError) {
-            fetchNetworkExceptionMessage =
-              fetchError instanceof Error
-                ? fetchError.message
-                : "Unknown fetch exception";
-            throw fetchError;
-          }
-        };
-
-        supabase = createClient(supabaseUrl, supabaseAnonKey, {
-          auth: {
-            autoRefreshToken: false,
-            persistSession: false
-          },
-          global: {
-            fetch: wrappedFetch
-          }
-        });
-
-        setDebug((prev) => ({
-          ...prev,
-          createClientSucceeded: true
-        }));
-      } catch (createClientError) {
-        const message =
-          createClientError instanceof Error
-            ? createClientError.message
-            : "Unknown createClient() error";
-        setDebug((prev) => ({
-          ...prev,
-          createClientSucceeded: false,
-          createClientError: message
-        }));
-        throw new Error(`createClient() failed: ${message}`);
+      if (!clientInit.client) {
+        throw new Error(
+          clientInit.createClientError ?? "createClient() failed."
+        );
       }
 
       signInAttempted = true;
-      const { data, error: signInError } = await supabase.auth.signInWithPassword({
+      setDebug((prev) => ({
+        ...prev,
+        attemptedAuthTokenFetch: true
+      }));
+
+      const { data, error: signInError } = await clientInit.client.auth.signInWithPassword({
         email,
         password
       });
 
       if (signInError) {
-        throw new Error(`Sign-in failed: ${signInError.message}`);
+        setError(`Sign-in failed: ${signInError.message}`);
+        setDebug((prev) => ({
+          ...prev,
+          attemptedFetchTargets: [...attemptedTargets],
+          fetchNetworkExceptionMessage
+        }));
+        return;
       }
 
       const accessToken = data.session?.access_token;
@@ -195,8 +241,7 @@ export default function LoginTestPage() {
       });
       setDebug((prev) => ({
         ...prev,
-        attemptedAuthTokenFetch,
-        attemptedFetchTargets: attemptedTargets,
+        attemptedFetchTargets: [...attemptedTargets],
         fetchNetworkExceptionMessage
       }));
 
@@ -209,8 +254,7 @@ export default function LoginTestPage() {
       const preSignInRuntimeError = signInAttempted ? null : message;
       setDebug((prev) => ({
         ...prev,
-        attemptedAuthTokenFetch,
-        attemptedFetchTargets: attemptedTargets,
+        attemptedFetchTargets: [...attemptedTargets],
         fetchNetworkExceptionMessage,
         preSignInRuntimeError
       }));
@@ -218,6 +262,7 @@ export default function LoginTestPage() {
         message
       );
     } finally {
+      window.fetch = originalFetch;
       setLoading(false);
     }
   }
@@ -246,6 +291,7 @@ export default function LoginTestPage() {
           >
             <strong>Temporary Debug (safe)</strong>
             <ul style={{ margin: "8px 0 0", paddingInlineStart: 18 }}>
+              <li>Submit handler reached: {String(debug.submitHandlerReached)}</li>
               <li>NEXT_PUBLIC_SUPABASE_URL exists: {String(debug.supabaseUrlExists)}</li>
               <li>Parsed Supabase host: {debug.supabaseHost}</li>
               <li>URL format looks valid (https + *.supabase.co): {String(debug.supabaseUrlLooksValid)}</li>
