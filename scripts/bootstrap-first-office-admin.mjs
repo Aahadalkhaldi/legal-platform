@@ -8,6 +8,23 @@ const TARGET = {
   ownerFullName: "Aletefaq Law Firm Owner",
 };
 
+const OWNER_ADMIN_PERMISSION_DEFINITIONS = [
+  { name: "cases:create", description: "Create legal cases and complaints." },
+  { name: "cases:update", description: "Update legal cases." },
+  { name: "timeline:create", description: "Create case timeline events." },
+  { name: "client_updates:create", description: "Draft updates for client portal." },
+  { name: "client_updates:publish", description: "Show or hide updates in client portal." },
+  { name: "documents:create", description: "Create document records." },
+  { name: "documents:version:create", description: "Upload immutable document versions." },
+  { name: "tasks:create", description: "Create legal workflow tasks." },
+  { name: "appointments:create", description: "Create hearings, meetings, and deadlines." },
+  { name: "billing:create", description: "Create invoices and billing records." },
+  { name: "ai:document_ingest", description: "Queue legal document intelligence jobs." },
+  { name: "service_requests:update", description: "Review, assign, and update client service requests." },
+];
+
+const OWNER_ADMIN_PERMISSION_NAMES = OWNER_ADMIN_PERMISSION_DEFINITIONS.map((permission) => permission.name);
+
 async function main() {
   const dryRun = process.argv.includes("--dry-run");
   const supabase = createServiceRoleClient();
@@ -19,11 +36,15 @@ async function main() {
     membership: "unchanged",
     accountId: null,
     authUserId: null,
+    permissionsBootstrap: "unchanged",
   };
 
   const authUser = await loadAuthUserByEmail(supabase, TARGET.email);
   const authUserId = authUser.id;
   summary.authUserId = authUserId;
+
+  const permissionsBootstrap = await ensureOwnerAdminPermissionBootstrap({ supabase, dryRun });
+  summary.permissionsBootstrap = permissionsBootstrap;
 
   const existingUser = await ensureUserRow({ supabase, dryRun, authUserId });
   summary.userRow = existingUser;
@@ -203,7 +224,7 @@ async function ensureOwnerMembership({ supabase, dryRun, authUserId, accountId, 
 
   const { data: existingMembership, error: selectError } = await supabase
     .from("account_memberships")
-    .select("id, role, status, deleted_at, accepted_at")
+    .select("id, role, status, deleted_at, accepted_at, permissions")
     .eq("account_id", accountId)
     .eq("user_id", authUserId)
     .maybeSingle();
@@ -219,7 +240,7 @@ async function ensureOwnerMembership({ supabase, dryRun, authUserId, accountId, 
         user_id: authUserId,
         role: "owner",
         status: "active",
-        permissions: [],
+        permissions: OWNER_ADMIN_PERMISSION_NAMES,
         invited_by: authUserId,
         invited_at: now,
         accepted_at: now,
@@ -249,6 +270,9 @@ async function ensureOwnerMembership({ supabase, dryRun, authUserId, accountId, 
   if (!existingMembership.accepted_at) {
     updates.accepted_at = now;
   }
+  if (!samePermissionSet(existingMembership.permissions, OWNER_ADMIN_PERMISSION_NAMES)) {
+    updates.permissions = OWNER_ADMIN_PERMISSION_NAMES;
+  }
   if (Object.keys(updates).length > 0) {
     updates.updated_by = authUserId;
   }
@@ -264,6 +288,66 @@ async function ensureOwnerMembership({ supabase, dryRun, authUserId, accountId, 
   }
 
   return Object.keys(updates).length > 0 ? "updated" : "unchanged";
+}
+
+async function ensureOwnerAdminPermissionBootstrap({ supabase, dryRun }) {
+  const roleRows = [
+    { name: "owner", description: "Account owner with protected sole-admin controls." },
+    { name: "admin", description: "Administrative manager for the legal office." },
+  ];
+  const permissionRows = OWNER_ADMIN_PERMISSION_DEFINITIONS;
+  const rolePermissionRows = [];
+
+  for (const role of ["owner", "admin"]) {
+    for (const permission of OWNER_ADMIN_PERMISSION_NAMES) {
+      rolePermissionRows.push({
+        role,
+        permission,
+      });
+    }
+  }
+
+  if (dryRun) {
+    return "would_update";
+  }
+
+  const { error: roleError } = await supabase.from("roles").upsert(roleRows, {
+    onConflict: "name",
+  });
+  if (roleError) {
+    throw new Error(`Failed to seed roles for owner/admin bootstrap: ${roleError.message}`);
+  }
+
+  const { error: permissionError } = await supabase.from("permissions").upsert(permissionRows, {
+    onConflict: "name",
+  });
+  if (permissionError) {
+    throw new Error(`Failed to seed permissions for owner/admin bootstrap: ${permissionError.message}`);
+  }
+
+  const { error: rolePermissionError } = await supabase.from("role_permissions").upsert(rolePermissionRows, {
+    onConflict: "role,permission",
+  });
+  if (rolePermissionError) {
+    throw new Error(`Failed to seed role_permissions for owner/admin bootstrap: ${rolePermissionError.message}`);
+  }
+
+  return "updated";
+}
+
+function samePermissionSet(currentPermissions, targetPermissions) {
+  if (!Array.isArray(currentPermissions)) {
+    return false;
+  }
+
+  const current = [...new Set(currentPermissions.map((value) => String(value)))].sort();
+  const target = [...new Set(targetPermissions.map((value) => String(value)))].sort();
+
+  if (current.length !== target.length) {
+    return false;
+  }
+
+  return current.every((value, index) => value === target[index]);
 }
 
 function requireEnv(name) {

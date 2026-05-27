@@ -81,9 +81,10 @@ npm run bootstrap:first-office-admin
 Behavior:
 
 - Resolves the target auth user dynamically from Supabase Auth by email (`law@aletefaq.com`) and uses the returned `user.id`.
+- Seeds/updates `roles`, `permissions`, and `role_permissions` for `owner` and `admin` with the required office permission set.
 - Ensures `public.users` row exists (with `full_name` and `email`) for the target auth user.
 - Ensures account `Aletefaq Law Firm` exists with slug `aletefaq-law-firm`.
-- Ensures target user has an active `owner` membership in that account.
+- Ensures target user has an active `owner` membership in that account with non-empty `account_memberships.permissions`.
 - Re-running is safe; existing rows are updated only when required.
 
 ## Client Service Requests
