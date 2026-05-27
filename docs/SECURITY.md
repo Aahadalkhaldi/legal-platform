@@ -59,6 +59,33 @@ Sensitive actions write to `audit_logs`, including:
 - device registration.
 - service request create/view/update/assignment.
 
+## First Office Admin Bootstrap
+
+- Script: `scripts/bootstrap-first-office-admin.mjs`
+- Purpose: idempotently bootstrap the first office account and owner membership for:
+  - `law@aletefaq.com`
+  - `cc0ccce0-19cb-4634-ba91-87d35f3a4813`
+- Uses Supabase service role only (`SUPABASE_SERVICE_ROLE_KEY`) and never logs secrets.
+
+Required environment variables:
+
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+
+Usage:
+
+```bash
+npm run bootstrap:first-office-admin -- --dry-run
+npm run bootstrap:first-office-admin
+```
+
+Behavior:
+
+- Ensures `public.users` row exists (with `full_name` and `email`) for the target auth user.
+- Ensures account `Aletefaq Law Firm` exists with slug `aletefaq-law-firm`.
+- Ensures target user has an active `owner` membership in that account.
+- Re-running is safe; existing rows are updated only when required.
+
 ## Client Service Requests
 
 - Clients can submit only their own `service_requests` rows within their active account.
