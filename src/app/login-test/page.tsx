@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { MouseEvent, SyntheticEvent, useMemo, useState } from "react";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 type ApiCallState = {
@@ -9,6 +9,7 @@ type ApiCallState = {
 } | null;
 
 type DebugState = {
+  buttonClicked: boolean;
   submitHandlerReached: boolean;
   supabaseUrlExists: boolean;
   supabaseHost: string;
@@ -107,6 +108,7 @@ export default function LoginTestPage() {
   const [error, setError] = useState<string | null>(null);
   const [apiResult, setApiResult] = useState<ApiCallState>(null);
   const [debug, setDebug] = useState<DebugState>({
+    buttonClicked: false,
     submitHandlerReached: false,
     supabaseUrlExists: Boolean(supabaseUrl),
     supabaseHost: parsedSupabase.host,
@@ -121,8 +123,11 @@ export default function LoginTestPage() {
     preSignInRuntimeError: null
   });
 
-  async function onSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: SyntheticEvent) {
     event.preventDefault();
+    if (loading) {
+      return;
+    }
     setLoading(true);
     setError(null);
     setApiResult(null);
@@ -267,6 +272,14 @@ export default function LoginTestPage() {
     }
   }
 
+  async function handleButtonClick(event: MouseEvent<HTMLButtonElement>) {
+    setDebug((prev) => ({
+      ...prev,
+      buttonClicked: true
+    }));
+    await handleSubmit(event);
+  }
+
   return (
     <main className="app-shell">
       <div className="page-container">
@@ -291,6 +304,7 @@ export default function LoginTestPage() {
           >
             <strong>Temporary Debug (safe)</strong>
             <ul style={{ margin: "8px 0 0", paddingInlineStart: 18 }}>
+              <li>Button clicked: {String(debug.buttonClicked)}</li>
               <li>Submit handler reached: {String(debug.submitHandlerReached)}</li>
               <li>NEXT_PUBLIC_SUPABASE_URL exists: {String(debug.supabaseUrlExists)}</li>
               <li>Parsed Supabase host: {debug.supabaseHost}</li>
@@ -323,7 +337,7 @@ export default function LoginTestPage() {
             ) : null}
           </div>
 
-          <form onSubmit={onSubmit} style={{ display: "grid", gap: 12 }}>
+          <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12 }}>
             <label style={{ display: "grid", gap: 6 }}>
               <span>Email</span>
               <input
@@ -348,6 +362,7 @@ export default function LoginTestPage() {
 
             <button
               type="submit"
+              onClick={handleButtonClick}
               className="button button-primary"
               disabled={loading}
               style={{ width: "fit-content" }}
