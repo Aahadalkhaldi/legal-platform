@@ -19,6 +19,40 @@ All errors use:
 
 Returns the active account membership, role, and permissions used by web and iOS clients.
 
+Success response for users with an active membership:
+
+```json
+{
+  "data": {
+    "userId": "uuid",
+    "email": "user@example.com",
+    "accountId": "uuid",
+    "role": "client",
+    "permissions": []
+  },
+  "requestId": "req_..."
+}
+```
+
+Bootstrap response for authenticated users missing membership/account linkage:
+
+```json
+{
+  "data": {
+    "onboardingRequired": true,
+    "code": "MEMBERSHIP_NOT_FOUND",
+    "userId": "uuid",
+    "email": "user@example.com"
+  },
+  "requestId": "req_..."
+}
+```
+
+`code` values for onboarding bootstrap:
+
+- `MEMBERSHIP_NOT_FOUND`: Auth user exists but has no active `account_memberships` row.
+- `ACCOUNT_NOT_FOUND`: Membership exists but target account is missing or inactive.
+
 ## Cases
 
 `GET /api/v1/cases?cursor=&limit=25&updated_after=`

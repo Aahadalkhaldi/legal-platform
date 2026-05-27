@@ -1,12 +1,25 @@
 import { fail, ok, requestId } from "@/lib/api/errors";
-import { getAuthContext } from "@/lib/api/context";
+import { resolveMeAuthContext } from "@/lib/api/context";
 
 export async function GET(request: Request) {
   const reqId = requestId(request);
 
   try {
-    const context = await getAuthContext(request);
-    return ok({ data: context, requestId: reqId });
+    const result = await resolveMeAuthContext(request);
+
+    if (result.status === "ready") {
+      return ok({ data: result.context, requestId: reqId });
+    }
+
+    return ok({
+      data: {
+        onboardingRequired: true,
+        code: result.code,
+        userId: result.userId,
+        email: result.email,
+      },
+      requestId: reqId,
+    });
   } catch (error) {
     return fail(error, reqId);
   }

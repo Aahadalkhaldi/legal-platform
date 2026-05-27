@@ -5,9 +5,13 @@ export type ApiErrorCode =
   | "UNAUTHORIZED"
   | "FORBIDDEN"
   | "NOT_FOUND"
+  | "ACCOUNT_NOT_FOUND"
+  | "MEMBERSHIP_NOT_FOUND"
   | "CONFLICT"
   | "VALIDATION_ERROR"
   | "INTERNAL_ERROR";
+
+export type BootstrapErrorCode = "ACCOUNT_NOT_FOUND" | "MEMBERSHIP_NOT_FOUND";
 
 export type ApiErrorEnvelope = {
   error: {
