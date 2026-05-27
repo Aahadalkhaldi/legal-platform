@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Scale,
 } from "lucide-react";
+import { hasMatterAction } from "@/lib/access-control";
 import { requestApiWithSession, SessionRequiredError } from "@/lib/api/browser-client";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
@@ -33,6 +34,15 @@ type ActionType =
 type MatterDetailResponse = {
   data: MatterDetail;
   requestId: string;
+};
+
+type MeResponse = {
+  data: {
+    onboardingRequired?: boolean;
+    role?: string;
+    permissions?: string[];
+    inheritedPermissions?: string[];
+  };
 };
 
 type MatterDetail = {
@@ -75,6 +85,7 @@ type Proceeding = {
   prosecutorName: string | null;
   policeStation: string | null;
   relatedLawsuitProceedingId: string | null;
+  clientVisible: boolean;
   filingDate: string | null;
   nextDeadlineAt: string | null;
   feesAmountQar: number | null;
@@ -90,6 +101,7 @@ type Proceeding = {
 type CreateProceedingForm = {
   actionType: ActionType;
   status: "open" | "pending" | "on_hold" | "closed" | "archived";
+  clientVisible: boolean;
   caseNumber: string;
   linkedCaseId: string;
   courtId: string;
@@ -112,6 +124,7 @@ type CreateProceedingForm = {
 const EMPTY_PROCEEDING_FORM: CreateProceedingForm = {
   actionType: "lawsuit",
   status: "open",
+  clientVisible: false,
   caseNumber: "",
   linkedCaseId: "",
   courtId: "",
@@ -159,6 +172,9 @@ export default function MatterDetailPage() {
   const [runningActionKey, setRunningActionKey] = useState<string | null>(null);
   const [actionErrorMessage, setActionErrorMessage] = useState<string | null>(null);
   const [actionSuccessMessage, setActionSuccessMessage] = useState<string | null>(null);
+  const [viewerRole, setViewerRole] = useState<string>("client_portal");
+  const [viewerPermissions, setViewerPermissions] = useState<string[]>([]);
+  const [viewerInheritedPermissions, setViewerInheritedPermissions] = useState<string[]>([]);
 
   const fetchMatter = useCallback(async () => {
     if (!matterId) {
@@ -167,6 +183,20 @@ export default function MatterDetailPage() {
 
     return requestApiWithSession<MatterDetailResponse>(supabase, `/api/v1/matters/${matterId}`);
   }, [matterId, supabase]);
+
+  const loadViewerAccess = useCallback(async () => {
+    const payload = await requestApiWithSession<MeResponse>(supabase, "/api/v1/me");
+    if (payload.data.onboardingRequired) {
+      setViewerRole("client_portal");
+      setViewerPermissions([]);
+      setViewerInheritedPermissions([]);
+      return;
+    }
+
+    setViewerRole(payload.data.role ?? "client_portal");
+    setViewerPermissions(payload.data.permissions ?? []);
+    setViewerInheritedPermissions(payload.data.inheritedPermissions ?? []);
+  }, [supabase]);
 
   const loadMatter = useCallback(async () => {
     if (!matterId) return;
@@ -199,7 +229,10 @@ export default function MatterDetailPage() {
 
     const bootstrap = async () => {
       try {
-        const payload = await fetchMatter();
+        const [payload] = await Promise.all([
+          fetchMatter(),
+          loadViewerAccess(),
+        ]);
         if (!payload || !isMounted) return;
         setMatter(payload.data);
         setSelectedProceedingId(payload.data.proceedings[0]?.id ?? "");
@@ -222,11 +255,43 @@ export default function MatterDetailPage() {
     return () => {
       isMounted = false;
     };
-  }, [fetchMatter, matterId, router]);
+  }, [fetchMatter, loadViewerAccess, matterId, router]);
+
+  const canCreateProceeding = useMemo(() => hasMatterAction({
+    role: viewerRole,
+    action: "create_proceeding",
+    directPermissions: viewerPermissions,
+    inheritedPermissions: viewerInheritedPermissions,
+  }), [viewerInheritedPermissions, viewerPermissions, viewerRole]);
+
+  const canCreateAppeal = useMemo(() => hasMatterAction({
+    role: viewerRole,
+    action: "create_appeal",
+    directPermissions: viewerPermissions,
+    inheritedPermissions: viewerInheritedPermissions,
+  }), [viewerInheritedPermissions, viewerPermissions, viewerRole]);
+
+  const canCreateCassation = useMemo(() => hasMatterAction({
+    role: viewerRole,
+    action: "create_cassation",
+    directPermissions: viewerPermissions,
+    inheritedPermissions: viewerInheritedPermissions,
+  }), [viewerInheritedPermissions, viewerPermissions, viewerRole]);
+
+  const canOpenExecution = useMemo(() => hasMatterAction({
+    role: viewerRole,
+    action: "open_execution",
+    directPermissions: viewerPermissions,
+    inheritedPermissions: viewerInheritedPermissions,
+  }), [viewerInheritedPermissions, viewerPermissions, viewerRole]);
 
   async function handleCreateProceeding(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!matterId) return;
+    if (!canCreateProceeding) {
+      setCreateProceedingError("You do not have permission to create proceedings.");
+      return;
+    }
 
     setCreatingProceeding(true);
     setCreateProceedingError(null);
@@ -238,6 +303,7 @@ export default function MatterDetailPage() {
         body: JSON.stringify({
           actionType: proceedingForm.actionType,
           status: proceedingForm.status,
+          clientVisible: proceedingForm.clientVisible,
           caseNumber: proceedingForm.caseNumber.trim() || undefined,
           linkedCaseId: proceedingForm.linkedCaseId.trim() || undefined,
           courtId: proceedingForm.courtId.trim() || undefined,
@@ -277,6 +343,10 @@ export default function MatterDetailPage() {
   async function handleTransition(action: TransitionAction) {
     if (!matterId || !selectedProceedingId) {
       setActionErrorMessage("Select a source proceeding first.");
+      return;
+    }
+    if (!isTransitionAllowed(action, { canCreateAppeal, canCreateCassation, canOpenExecution, canCreateProceeding })) {
+      setActionErrorMessage("You do not have permission to run this transition.");
       return;
     }
 
@@ -330,7 +400,7 @@ export default function MatterDetailPage() {
               type="button"
               className="button button-primary"
               onClick={() => void handleTransition("appeal")}
-              disabled={!selectedProceedingId || runningActionKey !== null}
+              disabled={!canCreateAppeal || !selectedProceedingId || runningActionKey !== null}
             >
               {runningActionKey?.startsWith("appeal:") ? <LoaderCircle size={18} className="animate-spin" /> : <Gavel size={18} />}
               Create Appeal
@@ -340,7 +410,7 @@ export default function MatterDetailPage() {
               type="button"
               className="button button-secondary"
               onClick={() => void handleTransition("cassation")}
-              disabled={!selectedProceedingId || runningActionKey !== null}
+              disabled={!canCreateCassation || !selectedProceedingId || runningActionKey !== null}
             >
               {runningActionKey?.startsWith("cassation:") ? <LoaderCircle size={18} className="animate-spin" /> : <Scale size={18} />}
               Create Cassation
@@ -350,7 +420,7 @@ export default function MatterDetailPage() {
               type="button"
               className="button button-secondary"
               onClick={() => void handleTransition("execution")}
-              disabled={!selectedProceedingId || runningActionKey !== null}
+              disabled={!canOpenExecution || !selectedProceedingId || runningActionKey !== null}
             >
               {runningActionKey?.startsWith("execution:") ? <LoaderCircle size={18} className="animate-spin" /> : <FilePlus2 size={18} />}
               Open Execution File
@@ -360,7 +430,7 @@ export default function MatterDetailPage() {
               type="button"
               className="button button-secondary"
               onClick={() => void handleTransition("complaint_to_lawsuit")}
-              disabled={!selectedProceedingId || runningActionKey !== null}
+              disabled={!canCreateProceeding || !selectedProceedingId || runningActionKey !== null}
             >
               {runningActionKey?.startsWith("complaint_to_lawsuit:") ? <LoaderCircle size={18} className="animate-spin" /> : <Gavel size={18} />}
               Complaint to Lawsuit
@@ -370,7 +440,7 @@ export default function MatterDetailPage() {
               type="button"
               className="button button-secondary"
               onClick={() => void handleTransition("complaint_to_prosecution")}
-              disabled={!selectedProceedingId || runningActionKey !== null}
+              disabled={!canCreateProceeding || !selectedProceedingId || runningActionKey !== null}
             >
               {runningActionKey?.startsWith("complaint_to_prosecution:") ? <LoaderCircle size={18} className="animate-spin" /> : <Scale size={18} />}
               Complaint to Prosecution
@@ -424,6 +494,8 @@ export default function MatterDetailPage() {
             type="button"
             className="button button-primary"
             onClick={() => setShowProceedingForm((value) => !value)}
+            disabled={!canCreateProceeding}
+            title={canCreateProceeding ? undefined : "Missing create_proceeding permission"}
           >
             <CirclePlus size={18} />
             {showProceedingForm ? "Hide Form" : "Create Action"}
@@ -471,6 +543,15 @@ export default function MatterDetailPage() {
                   <option value="closed">closed</option>
                   <option value="archived">archived</option>
                 </select>
+              </label>
+
+              <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  type="checkbox"
+                  checked={proceedingForm.clientVisible}
+                  onChange={(event) => setProceedingForm((value) => ({ ...value, clientVisible: event.target.checked }))}
+                />
+                <span>Share this proceeding with client portal</span>
               </label>
 
               {showLawsuitFields ? (
@@ -703,6 +784,7 @@ export default function MatterDetailPage() {
                     <span>Respondent: {row.respondent ?? "N/A"}</span>
                     <span>Sessions: {row.investigationSessions?.length ?? 0}</span>
                     <span>Prosecutor/Station: {row.prosecutorName ?? row.policeStation ?? "N/A"}</span>
+                    <span>Client Shared: {row.clientVisible ? "yes" : "no"}</span>
                     <span>Hearings: {row.hearings.length}</span>
                     <span>Documents: {row.documents.length}</span>
                     <span>Tasks: {row.tasks.length}</span>
@@ -743,6 +825,21 @@ const successMessageByAction: Record<TransitionAction, string> = {
   complaint_to_lawsuit: "Complaint converted to lawsuit.",
   complaint_to_prosecution: "Complaint converted to prosecution case.",
 };
+
+function isTransitionAllowed(
+  action: TransitionAction,
+  permissions: {
+    canCreateAppeal: boolean;
+    canCreateCassation: boolean;
+    canOpenExecution: boolean;
+    canCreateProceeding: boolean;
+  },
+) {
+  if (action === "appeal") return permissions.canCreateAppeal;
+  if (action === "cassation") return permissions.canCreateCassation;
+  if (action === "execution") return permissions.canOpenExecution;
+  return permissions.canCreateProceeding;
+}
 
 const inputStyle: CSSProperties = {
   width: "100%",

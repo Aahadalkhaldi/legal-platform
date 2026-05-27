@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { ApiError } from "@/lib/api/errors";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
+import { expandLegacyActionAliases, isElevatedPlatformRole, normalizePlatformRole, permissionImplies } from "@/lib/access-control";
 import type { BootstrapErrorCode, CurrentUser, RoleName } from "@/lib/types";
 
 type MembershipRecord = {
@@ -158,6 +159,8 @@ export async function resolveMeAuthContext(request: Request): Promise<MeAuthCont
     return onboardingResult("ACCOUNT_NOT_FOUND", user, stageMarkers, debugStage);
   }
 
+  const inheritedPermissions = await safeLoadRolePermissions(accountLookupClient, String(membership.role));
+
   return {
     status: "ready",
     context: {
@@ -165,7 +168,12 @@ export async function resolveMeAuthContext(request: Request): Promise<MeAuthCont
       email: user.email,
       accountId: membership.account_id,
       role: membership.role as RoleName,
-      permissions: Array.isArray(membership.permissions) ? membership.permissions : [],
+      permissions: mergeEffectivePermissions({
+        directPermissions: Array.isArray(membership.permissions) ? membership.permissions : [],
+        inheritedPermissions,
+      }),
+      inheritedPermissions,
+      normalizedRole: normalizePlatformRole(String(membership.role)),
     },
   };
 }
@@ -256,6 +264,57 @@ async function safeLoadActiveAccount(
   }
 }
 
+async function safeLoadRolePermissions(supabase: BootstrapLookupClient, role: string): Promise<string[]> {
+  try {
+    const rolePermissionClient = supabase as unknown as {
+      from: (table: "role_permissions") => {
+        select: (columns: string) => {
+          eq: (column: string, value: string) => Promise<{
+            data: Array<{ permission?: string | null }> | null;
+            error: unknown;
+          }>;
+        };
+      };
+    };
+
+    const { data, error } = await rolePermissionClient
+      .from("role_permissions")
+      .select("permission")
+      .eq("role", role);
+
+    if (error || !Array.isArray(data)) {
+      return [];
+    }
+
+    return data
+      .map((row) => (typeof row.permission === "string" ? row.permission : null))
+      .filter((value): value is string => value !== null);
+  } catch {
+    return [];
+  }
+}
+
+function mergeEffectivePermissions(input: { directPermissions: unknown[]; inheritedPermissions: string[] }) {
+  const effective = new Set<string>();
+  for (const permission of input.directPermissions) {
+    if (typeof permission !== "string") continue;
+    effective.add(permission);
+    for (const alias of expandLegacyActionAliases(permission)) {
+      effective.add(alias);
+    }
+  }
+
+  for (const permission of input.inheritedPermissions) {
+    if (typeof permission !== "string") continue;
+    effective.add(permission);
+    for (const alias of expandLegacyActionAliases(permission)) {
+      effective.add(alias);
+    }
+  }
+
+  return Array.from(effective);
+}
+
 function isAccessDeniedError(error: unknown) {
   if (!error || typeof error !== "object") {
     return false;
@@ -299,7 +358,12 @@ export async function getAuthContext(request: Request): Promise<CurrentUser> {
 }
 
 export function requirePermission(context: CurrentUser, permission: string) {
-  if (context.role === "owner" || context.role === "admin" || context.permissions.includes(permission)) {
+  if (isElevatedPlatformRole(context.role)) {
+    return;
+  }
+
+  const granted = [...context.permissions, ...(context.inheritedPermissions ?? [])];
+  if (granted.some((grantedPermission) => permissionImplies(grantedPermission, permission))) {
     return;
   }
 
@@ -307,7 +371,9 @@ export function requirePermission(context: CurrentUser, permission: string) {
 }
 
 export function requireRole(context: CurrentUser, roles: RoleName[]) {
-  if (roles.includes(context.role)) {
+  const normalizedCurrentRole = normalizePlatformRole(context.role);
+  const isAllowed = roles.some((role) => role === context.role || normalizePlatformRole(role) === normalizedCurrentRole);
+  if (isAllowed) {
     return;
   }
 

@@ -1,5 +1,5 @@
 import { getAuthContext, requirePermission } from "@/lib/api/context";
-import { assertMatterAccess, assertLinkedCaseInAccount } from "@/lib/api/matters-access";
+import { assertLinkedCaseInAccount, assertMatterActionAccess } from "@/lib/api/matters-access";
 import { resolveStageForActionType } from "@/lib/api/matter-proceedings";
 import { writeAuditEvent } from "@/lib/api/audit";
 import { fail, ok, requestId } from "@/lib/api/errors";
@@ -16,7 +16,7 @@ export async function POST(request: Request, contextParams: { params: Promise<{ 
     const payload = createMatterProceedingSchema.parse(await request.json());
     const supabase = createSupabaseAdmin();
 
-    await assertMatterAccess(supabase, context, matterId);
+    await assertMatterActionAccess(supabase, context, matterId, "create_proceeding");
     const resolvedStage = resolveStageForActionType(payload.actionType, payload.stage);
 
     if (payload.linkedCaseId) {
@@ -47,6 +47,7 @@ export async function POST(request: Request, contextParams: { params: Promise<{ 
         prosecutor_name: payload.prosecutorName ?? null,
         police_station: payload.policeStation ?? null,
         related_lawsuit_proceeding_id: payload.relatedLawsuitProceedingId ?? null,
+        client_visible: payload.clientVisible ?? false,
         filing_date: payload.filingDate ?? null,
         next_deadline_at: payload.nextDeadlineAt ?? null,
         fees_amount: payload.feesAmountQar ?? 0,

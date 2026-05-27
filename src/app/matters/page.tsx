@@ -4,6 +4,7 @@ import Link from "next/link";
 import { FormEvent, type CSSProperties, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BriefcaseBusiness, CirclePlus, LoaderCircle, LogOut, RefreshCw, Scale } from "lucide-react";
+import { hasMatterAction } from "@/lib/access-control";
 import { requestApiWithSession, SessionRequiredError } from "@/lib/api/browser-client";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
@@ -31,6 +32,15 @@ type MatterListResponse = {
 type CreateMatterResponse = {
   data: {
     id: string;
+  };
+};
+
+type MeResponse = {
+  data: {
+    onboardingRequired?: boolean;
+    role?: string;
+    permissions?: string[];
+    inheritedPermissions?: string[];
   };
 };
 
@@ -95,9 +105,26 @@ export default function MattersPage() {
   const [createForm, setCreateForm] = useState<CreateMatterForm>(EMPTY_FORM);
   const [createErrorMessage, setCreateErrorMessage] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [viewerRole, setViewerRole] = useState<string>("client_portal");
+  const [viewerPermissions, setViewerPermissions] = useState<string[]>([]);
+  const [viewerInheritedPermissions, setViewerInheritedPermissions] = useState<string[]>([]);
 
   const fetchMatters = useCallback(async () => {
     return requestApiWithSession<MatterListResponse>(supabase, "/api/v1/matters");
+  }, [supabase]);
+
+  const loadViewerAccess = useCallback(async () => {
+    const payload = await requestApiWithSession<MeResponse>(supabase, "/api/v1/me");
+    if (payload.data.onboardingRequired) {
+      setViewerRole("client_portal");
+      setViewerPermissions([]);
+      setViewerInheritedPermissions([]);
+      return;
+    }
+
+    setViewerRole(payload.data.role ?? "client_portal");
+    setViewerPermissions(payload.data.permissions ?? []);
+    setViewerInheritedPermissions(payload.data.inheritedPermissions ?? []);
   }, [supabase]);
 
   const loadMatters = useCallback(async () => {
@@ -123,7 +150,10 @@ export default function MattersPage() {
 
     const bootstrap = async () => {
       try {
-        const payload = await fetchMatters();
+        const [payload] = await Promise.all([
+          fetchMatters(),
+          loadViewerAccess(),
+        ]);
         if (!isMounted) return;
         setMatters(payload.data ?? []);
       } catch (error) {
@@ -145,10 +175,29 @@ export default function MattersPage() {
     return () => {
       isMounted = false;
     };
-  }, [fetchMatters, router]);
+  }, [fetchMatters, loadViewerAccess, router]);
+
+  const canManageClients = useMemo(() => hasMatterAction({
+    role: viewerRole,
+    action: "manage_clients",
+    directPermissions: viewerPermissions,
+    inheritedPermissions: viewerInheritedPermissions,
+  }), [viewerInheritedPermissions, viewerPermissions, viewerRole]);
+
+  const canCreateProceeding = useMemo(() => hasMatterAction({
+    role: viewerRole,
+    action: "create_proceeding",
+    directPermissions: viewerPermissions,
+    inheritedPermissions: viewerInheritedPermissions,
+  }), [viewerInheritedPermissions, viewerPermissions, viewerRole]);
 
   async function handleCreateMatter(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!canManageClients) {
+      setCreateErrorMessage("You do not have permission to create legal matters.");
+      return;
+    }
+
     setIsCreating(true);
     setCreateErrorMessage(null);
 
@@ -165,11 +214,12 @@ export default function MattersPage() {
       });
 
       const matterId = matterPayload.data.id;
-      if (createForm.intakeType === "lawsuit") {
+      if (createForm.intakeType === "lawsuit" && canCreateProceeding) {
         await requestApiWithSession(supabase, `/api/v1/matters/${matterId}/proceedings`, {
           method: "POST",
           body: JSON.stringify({
             actionType: "lawsuit",
+            clientVisible: false,
             caseNumber: createForm.lawsuitCaseNumber.trim() || undefined,
             courtId: createForm.lawsuitCourtId.trim() || undefined,
             circuit: createForm.lawsuitCircuit.trim() || undefined,
@@ -177,11 +227,12 @@ export default function MattersPage() {
             claimType: createForm.lawsuitClaimType.trim() || undefined,
           }),
         });
-      } else if (createForm.intakeType === "complaint_report") {
+      } else if (createForm.intakeType === "complaint_report" && canCreateProceeding) {
         await requestApiWithSession(supabase, `/api/v1/matters/${matterId}/proceedings`, {
           method: "POST",
           body: JSON.stringify({
             actionType: createForm.complaintActionType,
+            clientVisible: false,
             authority: createForm.complaintAuthority.trim() || undefined,
             reportNumber: createForm.complaintReportNumber.trim() || undefined,
             submissionDate: toIsoOrUndefined(createForm.complaintSubmissionDate),
@@ -229,7 +280,13 @@ export default function MattersPage() {
           </p>
 
           <div className="actions">
-            <button className="button button-primary" type="button" onClick={() => setShowCreateForm((value) => !value)}>
+            <button
+              className="button button-primary"
+              type="button"
+              onClick={() => setShowCreateForm((value) => !value)}
+              disabled={!canManageClients}
+              title={canManageClients ? undefined : "Missing manage_clients permission"}
+            >
               <CirclePlus size={18} />
               {showCreateForm ? "Hide Form" : "Create Legal Matter"}
             </button>
@@ -248,6 +305,7 @@ export default function MattersPage() {
           </div>
 
           {showCreateForm ? (
+            canManageClients ? (
             <form onSubmit={handleCreateMatter} style={{ marginTop: 18, display: "grid", gap: 12 }}>
               <label style={{ display: "grid", gap: 6 }}>
                 <span>Title</span>
@@ -450,6 +508,11 @@ export default function MattersPage() {
                 {isCreating ? "Creating..." : "Create"}
               </button>
             </form>
+            ) : (
+              <p role="alert" style={{ color: "#b42318", marginTop: 14 }}>
+                You do not have permission to create legal matters.
+              </p>
+            )
           ) : null}
         </section>
 

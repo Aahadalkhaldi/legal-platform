@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "@/lib/api/errors";
 import {
+  assertConfidentialDocumentReadable,
   assertClientCanUploadDocument,
   assertClientUploadStoragePath,
   assertDocumentSignedUrlAllowedForClient,
@@ -171,5 +172,29 @@ describe("document upload security", () => {
         assertCaseAccess: async () => {},
       }),
     ).rejects.toThrow(ApiError);
+  });
+
+  it("rejects signed-url access when a document is not explicitly shared", async () => {
+    await expect(
+      assertDocumentSignedUrlAllowedForClient({
+        context: { ...clientContext, role: "client_portal" },
+        document: { account_id: clientContext.accountId, case_id: baseMetadata.caseId, visible_to_client: true },
+        isExplicitlySharedWithClient: false,
+        assertCaseAccess: async () => {},
+      }),
+    ).rejects.toThrow(ApiError);
+  });
+
+  it("blocks trainee access to confidential documents without explicit confidential grant", () => {
+    expect(() =>
+      assertConfidentialDocumentReadable({
+        context: { ...clientContext, role: "trainee" },
+        classification: "confidential",
+        matterAccess: {
+          accessRole: "assigned_lawyer",
+          canViewConfidentialDocuments: false,
+        },
+      }),
+    ).toThrow(ApiError);
   });
 });

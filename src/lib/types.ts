@@ -1,4 +1,17 @@
-export type RoleName = "owner" | "admin" | "lawyer" | "staff" | "client" | "system";
+export type RoleName =
+  | "super_admin"
+  | "office_owner"
+  | "admin"
+  | "lawyer"
+  | "trainee"
+  | "finance"
+  | "secretary"
+  | "client_portal"
+  | "external_collaborator"
+  | "system"
+  | "owner"
+  | "staff"
+  | "client";
 
 export type ApiErrorCode =
   | "BAD_REQUEST"
@@ -36,6 +49,8 @@ export type CurrentUser = {
   accountId: string;
   role: RoleName;
   permissions: string[];
+  inheritedPermissions?: string[];
+  normalizedRole?: string;
 };
 
 export type CaseSummary = {

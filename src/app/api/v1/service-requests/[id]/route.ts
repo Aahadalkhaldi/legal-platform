@@ -1,5 +1,6 @@
 import { getAuthContext, requirePermission } from "@/lib/api/context";
 import { writeAuditEvent } from "@/lib/api/audit";
+import { isClientPortalRole } from "@/lib/access-control";
 import { ApiError, fail, ok, requestId } from "@/lib/api/errors";
 import { updateServiceRequestSchema } from "@/lib/api/schemas";
 import { toServiceRequestDTO } from "@/lib/api/service-requests";
@@ -19,7 +20,7 @@ export async function GET(request: Request, contextParams: { params: Promise<{ i
       .eq("id", id)
       .eq("account_id", context.accountId);
 
-    if (context.role === "client") {
+    if (isClientPortalRole(context.role)) {
       query = query.eq("client_user_id", context.userId);
     }
 

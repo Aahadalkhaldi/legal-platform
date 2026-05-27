@@ -1,4 +1,11 @@
 import { ApiError } from "@/lib/api/errors";
+import {
+  canViewMatter,
+  hasMatterAction,
+  normalizePlatformRole,
+  type MatterAccessAssignmentInput,
+  type MatterActionPermission,
+} from "@/lib/access-control";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import type { CurrentUser } from "@/lib/types";
 import type { MatterProceedingRecord } from "@/lib/api/matter-proceedings";
@@ -18,11 +25,60 @@ type LegalMatterAccessRecord = {
   }> | null;
 };
 
+type MatterAccessEntryRecord = {
+  access_role: MatterAccessAssignmentInput["accessRole"];
+  allowed_actions: string[] | null;
+  can_view_confidential_documents: boolean | null;
+  billing_scope_only: boolean | null;
+};
+
+type MatterAccessResolution = {
+  matter: LegalMatterAccessRecord;
+  assignment: MatterAccessAssignmentInput | null;
+};
+
 export async function assertMatterAccess(
   supabase: ReturnType<typeof createSupabaseAdmin>,
   context: CurrentUser,
   matterId: string,
 ) {
+  const resolved = await resolveMatterAccess(supabase, context, matterId);
+  return resolved.matter;
+}
+
+export async function assertMatterActionAccess(
+  supabase: ReturnType<typeof createSupabaseAdmin>,
+  context: CurrentUser,
+  matterId: string,
+  action: MatterActionPermission,
+) {
+  const resolved = await resolveMatterAccess(supabase, context, matterId);
+
+  if (!hasMatterAction({
+    role: context.role,
+    action,
+    directPermissions: context.permissions,
+    inheritedPermissions: context.inheritedPermissions,
+    matterAccess: resolved.assignment,
+  })) {
+    await writeMatterAccessDeniedAudit(supabase, context, matterId, `Missing action permission: ${action}.`);
+    throw new ApiError("FORBIDDEN", `Missing action permission: ${action}.`);
+  }
+
+  const normalizedRole = normalizePlatformRole(context.role);
+  if (normalizedRole === "finance" && action !== "manage_billing" && action !== "export_case") {
+    await writeMatterAccessDeniedAudit(supabase, context, matterId, "Finance role attempted non-billing action.");
+    throw new ApiError("FORBIDDEN", "Finance role is restricted to billing and export actions.");
+  }
+
+  return resolved;
+}
+
+async function resolveMatterAccess(
+  supabase: ReturnType<typeof createSupabaseAdmin>,
+  context: CurrentUser,
+  matterId: string,
+): Promise<MatterAccessResolution> {
   const { data, error } = await supabase
     .from("legal_matters")
     .select("id, account_id, client_id, client:clients(id, user_id, full_name)")
@@ -36,14 +92,65 @@ export async function assertMatterAccess(
     throw new ApiError("NOT_FOUND", "Legal matter was not found.");
   }
 
-  if (context.role === "client") {
-    const clientJoin = Array.isArray(data.client) ? data.client[0] : data.client;
-    if (!clientJoin || clientJoin.user_id !== context.userId) {
-      throw new ApiError("FORBIDDEN", "Clients can only access their own legal matters.");
+  const assignment = await loadMatterAccessAssignment(supabase, context, matterId);
+  const clientJoin = Array.isArray(data.client) ? data.client[0] : data.client;
+
+  if (!canViewMatter({ role: context.role, matterAccess: assignment })) {
+    const legacyOfficeFallback = ["owner", "admin", "lawyer", "staff", "system"].includes(context.role);
+    if (!legacyOfficeFallback) {
+      await writeMatterAccessDeniedAudit(supabase, context, matterId, "Matter visibility denied.");
+      throw new ApiError("FORBIDDEN", "You do not have access to this legal matter.");
     }
   }
 
-  return data as LegalMatterAccessRecord;
+  if (normalizePlatformRole(context.role) === "client_portal") {
+    if (!clientJoin || clientJoin.user_id !== context.userId) {
+      await writeMatterAccessDeniedAudit(supabase, context, matterId, "Client portal user is not linked to the matter client.");
+      throw new ApiError("FORBIDDEN", "Client portal users can only access their linked legal matters.");
+    }
+  }
+
+  return {
+    matter: data as LegalMatterAccessRecord,
+    assignment,
+  };
+}
+
+async function loadMatterAccessAssignment(
+  supabase: ReturnType<typeof createSupabaseAdmin>,
+  context: CurrentUser,
+  matterId: string,
+): Promise<MatterAccessAssignmentInput | null> {
+  const { data, error } = await supabase
+    .from("matter_access_entries")
+    .select("access_role, allowed_actions, can_view_confidential_documents, billing_scope_only")
+    .eq("account_id", context.accountId)
+    .eq("legal_matter_id", matterId)
+    .eq("user_id", context.userId)
+    .eq("status", "active")
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (error) {
+    const code = typeof (error as { code?: unknown }).code === "string" ? (error as { code: string }).code : "";
+    if (code === "42P01") {
+      return null;
+    }
+
+    throw error;
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  const typed = data as MatterAccessEntryRecord;
+  return {
+    accessRole: typed.access_role,
+    allowedActions: typed.allowed_actions ?? [],
+    canViewConfidentialDocuments: typed.can_view_confidential_documents,
+    billingScopeOnly: typed.billing_scope_only,
+  };
 }
 
 export async function loadMatterProceeding(
@@ -54,7 +161,7 @@ export async function loadMatterProceeding(
 ) {
   const { data, error } = await supabase
     .from("matter_proceedings")
-    .select("id, account_id, legal_matter_id, action_type, stage, status, case_number, court_id, circuit, department, claim_type, judgment_summary, authority, report_number, submission_date, complainant, respondent, investigation_sessions, prosecutor_name, police_station, related_lawsuit_proceeding_id, filing_date, next_deadline_at, fees_amount, metadata")
+    .select("id, account_id, legal_matter_id, action_type, stage, status, case_number, court_id, circuit, department, claim_type, judgment_summary, authority, report_number, submission_date, complainant, respondent, investigation_sessions, prosecutor_name, police_station, related_lawsuit_proceeding_id, client_visible, filing_date, next_deadline_at, fees_amount, metadata")
     .eq("id", proceedingId)
     .eq("account_id", context.accountId)
     .eq("legal_matter_id", matterId)
@@ -64,6 +171,12 @@ export async function loadMatterProceeding(
   if (error) throw error;
   if (!data) {
     throw new ApiError("NOT_FOUND", "Matter proceeding was not found.");
+  }
+
+  const normalizedRole = normalizePlatformRole(context.role);
+  if (normalizedRole === "client_portal" && !data.client_visible) {
+    await writeMatterAccessDeniedAudit(supabase, context, matterId, "Proceeding is not shared with client portal.");
+    throw new ApiError("FORBIDDEN", "Proceeding is not shared with the client portal.");
   }
 
   return data as MatterProceedingRecord;
@@ -85,5 +198,27 @@ export async function assertLinkedCaseInAccount(
   if (error) throw error;
   if (!data) {
     throw new ApiError("FORBIDDEN", "Linked case must belong to the same account.");
+  }
+}
+
+async function writeMatterAccessDeniedAudit(
+  supabase: ReturnType<typeof createSupabaseAdmin>,
+  context: CurrentUser,
+  matterId: string,
+  reason: string,
+) {
+  try {
+    await supabase.from("audit_logs").insert({
+      account_id: context.accountId,
+      actor_user_id: context.userId,
+      actor_role: context.role,
+      action: "MATTER_ACCESS_DENIED",
+      target_type: "legal_matter",
+      target_id: matterId,
+      request_id: `authz-${Date.now()}`,
+      after_snapshot: { reason },
+    });
+  } catch {
+    // Never block access-control decisions because audit insertion failed.
   }
 }

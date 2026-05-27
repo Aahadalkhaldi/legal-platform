@@ -66,6 +66,7 @@ export type MatterProceedingRecord = {
   prosecutor_name: string | null;
   police_station: string | null;
   related_lawsuit_proceeding_id: string | null;
+  client_visible: boolean;
   filing_date: string | null;
   next_deadline_at: string | null;
   fees_amount: number | null;
@@ -139,6 +140,7 @@ export function buildProceedingTransitionInsert(input: {
   prosecutorName?: string | null;
   policeStation?: string | null;
   relatedLawsuitProceedingId?: string | null;
+  clientVisible?: boolean;
   filingDate?: string | null;
   nextDeadlineAt?: string | null;
   feesAmount?: number | null;
@@ -169,6 +171,7 @@ export function buildProceedingTransitionInsert(input: {
     police_station: input.policeStation ?? input.sourceProceeding.police_station,
     related_lawsuit_proceeding_id:
       input.relatedLawsuitProceedingId ?? input.sourceProceeding.related_lawsuit_proceeding_id ?? null,
+    client_visible: input.clientVisible ?? input.sourceProceeding.client_visible ?? false,
     filing_date: input.filingDate ?? null,
     next_deadline_at: input.nextDeadlineAt ?? input.sourceProceeding.next_deadline_at,
     fees_amount: input.feesAmount ?? input.sourceProceeding.fees_amount ?? 0,

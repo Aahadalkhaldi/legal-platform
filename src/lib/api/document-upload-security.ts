@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api/errors";
+import { canViewConfidentialDocuments, isClientPortalRole, normalizePlatformRole, type MatterAccessAssignmentInput } from "@/lib/access-control";
 import type { CurrentUser } from "@/lib/types";
 
 export const LEGAL_DOCUMENT_BUCKET = "legal-documents";
@@ -38,7 +39,7 @@ export type UploadedObjectMetadata = {
 };
 
 export function assertClientCanUploadDocument(context: CurrentUser, metadata: ClientUploadMetadata) {
-  if (context.role !== "client") {
+  if (!isClientPortalRole(context.role)) {
     throw new ApiError("FORBIDDEN", "Only client portal users can use client upload URLs.");
   }
 
@@ -56,7 +57,7 @@ export function assertClientCanUploadDocument(context: CurrentUser, metadata: Cl
 }
 
 export function assertInternalDocumentVersionCreateAllowed(context: CurrentUser) {
-  if (context.role === "client") {
+  if (isClientPortalRole(context.role)) {
     throw new ApiError("FORBIDDEN", "Client portal users must use the client upload workflow.");
   }
 }
@@ -64,9 +65,10 @@ export function assertInternalDocumentVersionCreateAllowed(context: CurrentUser)
 export async function assertDocumentSignedUrlAllowedForClient(input: {
   context: CurrentUser;
   document: { account_id?: string | null; case_id?: string | null; visible_to_client?: boolean | null };
+  isExplicitlySharedWithClient?: boolean;
   assertCaseAccess: (caseId: string) => Promise<void>;
 }) {
-  if (input.context.role !== "client") {
+  if (!isClientPortalRole(input.context.role)) {
     return;
   }
 
@@ -80,8 +82,26 @@ export async function assertDocumentSignedUrlAllowedForClient(input: {
 
   await input.assertCaseAccess(input.document.case_id);
 
-  if (!input.document.visible_to_client) {
+  if (!input.document.visible_to_client || input.isExplicitlySharedWithClient === false) {
     throw new ApiError("FORBIDDEN", "Document is not shared with the client portal.");
+  }
+}
+
+export function assertConfidentialDocumentReadable(input: {
+  context: CurrentUser;
+  classification?: string | null;
+  matterAccess?: MatterAccessAssignmentInput | null;
+}) {
+  if (input.classification !== "confidential") {
+    return;
+  }
+
+  if (normalizePlatformRole(input.context.role) !== "trainee") {
+    return;
+  }
+
+  if (!canViewConfidentialDocuments({ role: input.context.role, matterAccess: input.matterAccess })) {
+    throw new ApiError("FORBIDDEN", "Trainee role cannot access confidential documents for this matter.");
   }
 }
 

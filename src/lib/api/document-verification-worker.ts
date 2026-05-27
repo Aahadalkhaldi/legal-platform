@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { assertClientUploadPathBelongsToDocument, LEGAL_DOCUMENT_BUCKET, MAX_CLIENT_UPLOAD_BYTES } from "@/lib/api/document-upload-security";
+import { isElevatedPlatformRole } from "@/lib/access-control";
 import { ApiError } from "@/lib/api/errors";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import type { CurrentUser } from "@/lib/types";
@@ -58,7 +59,7 @@ export type VerificationWorkerDependencies = {
 };
 
 export function assertManualDocumentVerificationAllowed(context: CurrentUser) {
-  if (!["owner", "admin", "system"].includes(context.role)) {
+  if (!isElevatedPlatformRole(context.role)) {
     throw new ApiError("FORBIDDEN", "Only internal administrators can run document verification.");
   }
 }

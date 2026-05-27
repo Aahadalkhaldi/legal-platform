@@ -22,4 +22,18 @@ export const QATAR_PROSECUTIONS = [
   { code: "traffic-prosecution", nameAr: "نيابة المرور", nameEn: "Traffic Prosecution" },
 ] as const;
 
-export const ROLE_NAMES = ["owner", "admin", "lawyer", "staff", "client", "system"] as const;
+export const ROLE_NAMES = [
+  "super_admin",
+  "office_owner",
+  "admin",
+  "lawyer",
+  "trainee",
+  "finance",
+  "secretary",
+  "client_portal",
+  "external_collaborator",
+  "system",
+  "owner",
+  "staff",
+  "client",
+] as const;

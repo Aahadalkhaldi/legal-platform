@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api/errors";
+import { isClientPortalRole } from "@/lib/access-control";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import type { CurrentUser } from "@/lib/types";
 
@@ -21,7 +22,7 @@ export async function assertCaseAccess(context: CurrentUser, caseId: string) {
     throw new ApiError("NOT_FOUND", "Case was not found.");
   }
 
-  if (context.role !== "client") {
+  if (!isClientPortalRole(context.role)) {
     return;
   }
 

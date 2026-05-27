@@ -17,12 +17,45 @@ The `account_memberships_owner_lockdown` trigger prevents:
 - suspending, deleting, or changing the last active owner;
 - leaving an account without an active owner.
 
+Enterprise platform roles now include:
+
+- `super_admin`, `office_owner`, `admin`, `lawyer`, `trainee`, `finance`, `secretary`, `client_portal`, `external_collaborator`.
+
+Legacy compatibility aliases:
+
+- `owner -> office_owner`
+- `staff -> secretary`
+- `client -> client_portal`
+
+Permission inheritance is computed from:
+
+- role default actions;
+- `role_permissions` grants;
+- `account_memberships.permissions` overrides;
+- matter-scoped overrides in `matter_access_entries.allowed_actions`.
+
+## Matter Access Layer
+
+- Table: `matter_access_entries`.
+- Key fields: `access_role`, `allowed_actions`, `can_view_confidential_documents`, `billing_scope_only`, `status`.
+- Supported matter roles:
+  - `lead_counsel`
+  - `assigned_lawyer`
+  - `reviewer`
+  - `finance_access`
+  - `read_only`
+  - `restricted`
+  - `client_access`
+- `client_portal` users require explicit `client_access` assignment.
+- `finance` role is constrained to billing/export actions.
+
 ## Legal Matters
 
 - `legal_matters` and `matter_proceedings` are tenant-scoped by `account_id` with RLS enabled.
 - Proceeding lifecycle actions (`convert-to-appeal`, `convert-to-cassation`, `open-execution`, `convert-to-lawsuit`, `convert-to-prosecution-case`) require `cases:update`.
 - Complaint/report actions and court actions remain under the same `legal_matter_id`; conversions create new rows and keep prior rows immutable for legal traceability.
 - Duplicate child conversions are constrained by `(account_id, parent_proceeding_id, action_type)` for active rows.
+- `matter_proceedings.client_visible` controls explicit proceeding sharing for client portal visibility.
 
 ## Documents
 
@@ -33,6 +66,9 @@ The `account_memberships_owner_lockdown` trigger prevents:
 - `document_versions.server_verified_sha256_hash` is reserved for the backend-computed hash. A mismatch must set `sha256_verification_status = 'verification_failed'` and `sha256_verification_error`.
 - Documents whose current version is `verification_failed` are blocked from signed download URLs until reviewed.
 - Client signed download URLs require both `visible_to_client = true` and case access through `case_participants`; guessing a `documentId` is not sufficient.
+- If document is linked to a matter proceeding, signed-url access for client portal also requires `matter_proceedings.client_visible = true`.
+- Explicit per-user document sharing via `document_access_grants` is supported in addition to `visible_to_client`.
+- `trainee` users are blocked from `classification = confidential` documents unless matter assignment explicitly allows confidential document visibility.
 - The manual verification runner `POST /api/v1/internal/document-verification/run` is restricted to `owner`, `admin`, and `system` roles and is never callable by client portal users.
 - Signed URLs expire after 120 seconds.
 - Client uploads use server-issued signed upload URLs only after account, role, case access, MIME type, and size validation.

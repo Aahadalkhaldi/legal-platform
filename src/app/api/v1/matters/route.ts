@@ -1,6 +1,7 @@
 import { getAuthContext, requirePermission } from "@/lib/api/context";
 import { writeAuditEvent } from "@/lib/api/audit";
 import { ApiError, fail, ok, requestId } from "@/lib/api/errors";
+import { hasMatterAction, isMatterScopedRole, normalizePlatformRole } from "@/lib/access-control";
 import { parseSearchParams } from "@/lib/api/pagination";
 import { createLegalMatterSchema } from "@/lib/api/schemas";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
@@ -24,7 +25,19 @@ export async function GET(request: Request) {
     if (cursor) query = query.lt("updated_at", cursor);
     if (updatedAfter) query = query.gte("updated_at", updatedAfter);
 
-    if (context.role === "client") {
+    const normalizedRole = normalizePlatformRole(context.role);
+    if (isMatterScopedRole(context.role)) {
+      const accessibleMatterIds = await loadAccessibleMatterIds(supabase, context.accountId, context.userId, normalizedRole);
+      if (accessibleMatterIds !== null) {
+        if (accessibleMatterIds.length === 0) {
+          return ok({ data: [], page: { limit, nextCursor: null } });
+        }
+
+        query = query.in("id", accessibleMatterIds);
+      }
+    }
+
+    if (normalizedRole === "client_portal") {
       const { data: clientRows, error: clientError } = await supabase
         .from("clients")
         .select("id")
@@ -79,6 +92,14 @@ export async function POST(request: Request) {
   try {
     const context = await getAuthContext(request);
     requirePermission(context, "cases:create");
+    if (!hasMatterAction({
+      role: context.role,
+      action: "manage_clients",
+      directPermissions: context.permissions,
+      inheritedPermissions: context.inheritedPermissions,
+    })) {
+      throw new ApiError("FORBIDDEN", "Missing action permission: manage_clients.");
+    }
     const payload = createLegalMatterSchema.parse(await request.json());
     const supabase = createSupabaseAdmin();
 
@@ -182,4 +203,36 @@ function extractClientName(clientJoin: unknown) {
   }
 
   return null;
+}
+
+async function loadAccessibleMatterIds(
+  supabase: ReturnType<typeof createSupabaseAdmin>,
+  accountId: string,
+  userId: string,
+  normalizedRole: string,
+) {
+  try {
+    let query = supabase
+      .from("matter_access_entries")
+      .select("legal_matter_id, access_role")
+      .eq("account_id", accountId)
+      .eq("user_id", userId)
+      .eq("status", "active")
+      .is("deleted_at", null);
+
+    if (normalizedRole === "client_portal") {
+      query = query.eq("access_role", "client_access");
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return (data ?? []).map((row) => row.legal_matter_id);
+  } catch (error) {
+    const code = typeof (error as { code?: unknown }).code === "string" ? (error as { code: string }).code : "";
+    if (code === "42P01") {
+      return null;
+    }
+
+    throw error;
+  }
 }

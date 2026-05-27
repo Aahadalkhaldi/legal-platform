@@ -1,5 +1,6 @@
 import { getAuthContext, requirePermission } from "@/lib/api/context";
 import { writeAuditEvent } from "@/lib/api/audit";
+import { isClientPortalRole } from "@/lib/access-control";
 import { fail, ok, requestId } from "@/lib/api/errors";
 import { parseSearchParams } from "@/lib/api/pagination";
 import { createCaseSchema } from "@/lib/api/schemas";
@@ -24,7 +25,7 @@ export async function GET(request: Request) {
     if (cursor) query = query.lt("updated_at", cursor);
     if (updatedAfter) query = query.gte("updated_at", updatedAfter);
 
-    if (context.role === "client") {
+    if (isClientPortalRole(context.role)) {
       query = query.in(
         "id",
         (

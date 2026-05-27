@@ -1,6 +1,7 @@
 import { assertCaseAccess } from "@/lib/api/case-access";
 import { getAuthContext } from "@/lib/api/context";
 import { writeAuditEvent } from "@/lib/api/audit";
+import { isClientPortalRole } from "@/lib/access-control";
 import { ApiError, fail, ok, requestId } from "@/lib/api/errors";
 import { parseSearchParams } from "@/lib/api/pagination";
 import { createServiceRequestSchema, serviceRequestStatusSchema } from "@/lib/api/schemas";
@@ -27,7 +28,7 @@ export async function GET(request: Request) {
       .order("created_at", { ascending: false })
       .limit(limit + 1);
 
-    if (context.role === "client") {
+    if (isClientPortalRole(context.role)) {
       query = query.eq("client_user_id", context.userId);
     }
 
@@ -57,7 +58,7 @@ export async function POST(request: Request) {
 
   try {
     const context = await getAuthContext(request);
-    if (context.role !== "client") {
+    if (!isClientPortalRole(context.role)) {
       throw new ApiError("FORBIDDEN", "Only client portal users can submit service requests.");
     }
 

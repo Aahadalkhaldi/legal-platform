@@ -1,6 +1,8 @@
 import { getAuthContext } from "@/lib/api/context";
 import { writeAuditEvent } from "@/lib/api/audit";
 import { ApiError, fail, ok, requestId } from "@/lib/api/errors";
+import { normalizePlatformRole } from "@/lib/access-control";
+import { assertMatterAccess } from "@/lib/api/matters-access";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 
 export async function GET(request: Request, contextParams: { params: Promise<{ matterId: string }> }) {
@@ -10,9 +12,11 @@ export async function GET(request: Request, contextParams: { params: Promise<{ m
     const context = await getAuthContext(request);
     const { matterId } = await contextParams.params;
     const supabase = createSupabaseAdmin();
+    const normalizedRole = normalizePlatformRole(context.role);
 
+    await assertMatterAccess(supabase, context, matterId);
     const matter = await loadMatterForContext(supabase, context, matterId);
-    const proceedings = await loadProceedings(supabase, context.accountId, matterId);
+    const proceedings = await loadProceedings(supabase, context.accountId, matterId, normalizedRole);
     const proceedingIds = proceedings.map((row) => row.id);
 
     const [
@@ -33,10 +37,17 @@ export async function GET(request: Request, contextParams: { params: Promise<{ m
       loadProceedingRows(supabase, context.accountId, "appointments", proceedingIds, "id, matter_proceeding_id, title, appointment_type, starts_at, ends_at"),
     ]);
 
+    const scopedDocuments = normalizedRole === "client_portal"
+      ? documents.filter((row) => row.visible_to_client === true)
+      : documents;
+    const scopedUpdates = normalizedRole === "client_portal"
+      ? updates.filter((row) => row.visible_to_client === true)
+      : updates;
+
     const hearingsMap = groupByProceedingId(hearings);
-    const documentsMap = groupByProceedingId(documents);
+    const documentsMap = groupByProceedingId(scopedDocuments);
     const tasksMap = groupByProceedingId(tasks);
-    const updatesMap = groupByProceedingId(updates);
+    const updatesMap = groupByProceedingId(scopedUpdates);
     const partiesMap = groupByProceedingId(parties);
     const feesMap = groupByProceedingId(fees);
     const deadlinesMap = groupByProceedingId(deadlines);
@@ -85,6 +96,7 @@ export async function GET(request: Request, contextParams: { params: Promise<{ m
           prosecutorName: row.prosecutor_name,
           policeStation: row.police_station,
           relatedLawsuitProceedingId: row.related_lawsuit_proceeding_id,
+          clientVisible: row.client_visible,
           filingDate: row.filing_date,
           nextDeadlineAt: row.next_deadline_at,
           feesAmountQar: row.fees_amount,
@@ -125,7 +137,7 @@ async function loadMatterForContext(
     throw new ApiError("NOT_FOUND", "Legal matter was not found.");
   }
 
-  if (context.role === "client") {
+  if (normalizePlatformRole(context.role) === "client_portal") {
     const clientJoin = extractClient(data.client);
     if (!clientJoin || clientJoin.userId !== context.userId) {
       throw new ApiError("FORBIDDEN", "Clients can only access their own legal matters.");
@@ -139,14 +151,20 @@ async function loadProceedings(
   supabase: ReturnType<typeof createSupabaseAdmin>,
   accountId: string,
   matterId: string,
+  normalizedRole: string,
 ) {
-  const { data, error } = await supabase
+  let query = supabase
     .from("matter_proceedings")
-    .select("id, parent_proceeding_id, linked_case_id, action_type, stage, status, case_number, circuit, department, claim_type, judgment_summary, authority, report_number, submission_date, complainant, respondent, investigation_sessions, prosecutor_name, police_station, related_lawsuit_proceeding_id, filing_date, next_deadline_at, fees_amount, metadata, created_at, updated_at, court:courts(id, name_ar), linked_case:cases(id, case_number, title, status, stage)")
+    .select("id, parent_proceeding_id, linked_case_id, action_type, stage, status, case_number, circuit, department, claim_type, judgment_summary, authority, report_number, submission_date, complainant, respondent, investigation_sessions, prosecutor_name, police_station, related_lawsuit_proceeding_id, client_visible, filing_date, next_deadline_at, fees_amount, metadata, created_at, updated_at, court:courts(id, name_ar), linked_case:cases(id, case_number, title, status, stage)")
     .eq("account_id", accountId)
     .eq("legal_matter_id", matterId)
-    .is("deleted_at", null)
-    .order("created_at", { ascending: true });
+    .is("deleted_at", null);
+
+  if (normalizedRole === "client_portal") {
+    query = query.eq("client_visible", true);
+  }
+
+  const { data, error } = await query.order("created_at", { ascending: true });
 
   if (error) throw error;
   return data ?? [];

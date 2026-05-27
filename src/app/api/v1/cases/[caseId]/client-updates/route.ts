@@ -1,6 +1,7 @@
 import { getAuthContext, requirePermission } from "@/lib/api/context";
 import { assertCaseAccess } from "@/lib/api/case-access";
 import { writeAuditEvent } from "@/lib/api/audit";
+import { isClientPortalRole } from "@/lib/access-control";
 import { fail, ok, requestId } from "@/lib/api/errors";
 import { createClientUpdateSchema } from "@/lib/api/schemas";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
@@ -21,7 +22,7 @@ export async function GET(request: Request, contextParams: { params: Promise<{ c
       .order("created_at", { ascending: false })
       .limit(50);
 
-    if (context.role === "client") {
+    if (isClientPortalRole(context.role)) {
       query = query.eq("visible_to_client", true);
     }
 

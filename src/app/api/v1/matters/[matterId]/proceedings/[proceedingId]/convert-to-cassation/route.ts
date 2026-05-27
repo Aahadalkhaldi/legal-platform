@@ -1,5 +1,5 @@
 import { getAuthContext, requirePermission } from "@/lib/api/context";
-import { assertMatterAccess, loadMatterProceeding } from "@/lib/api/matters-access";
+import { assertMatterActionAccess, loadMatterProceeding } from "@/lib/api/matters-access";
 import { buildProceedingTransitionInsert } from "@/lib/api/matter-proceedings";
 import { writeAuditEvent } from "@/lib/api/audit";
 import { ApiError, fail, ok, requestId } from "@/lib/api/errors";
@@ -19,7 +19,7 @@ export async function POST(
     const payload = convertMatterProceedingSchema.parse(await request.json());
     const supabase = createSupabaseAdmin();
 
-    await assertMatterAccess(supabase, context, matterId);
+    await assertMatterActionAccess(supabase, context, matterId, "create_cassation");
     const source = await loadMatterProceeding(supabase, context, matterId, proceedingId);
 
     const { data: existingTransition, error: existingError } = await supabase
@@ -56,6 +56,7 @@ export async function POST(
       prosecutorName: payload.prosecutorName ?? null,
       policeStation: payload.policeStation ?? null,
       relatedLawsuitProceedingId: payload.relatedLawsuitProceedingId ?? null,
+      clientVisible: payload.clientVisible ?? source.client_visible,
       targetStage: payload.stage ?? "cassation",
       filingDate: payload.filingDate ?? null,
       nextDeadlineAt: payload.nextDeadlineAt ?? null,

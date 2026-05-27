@@ -27,8 +27,10 @@ Success response for users with an active membership:
     "userId": "uuid",
     "email": "user@example.com",
     "accountId": "uuid",
-    "role": "client",
-    "permissions": []
+    "role": "office_owner",
+    "normalizedRole": "office_owner",
+    "permissions": ["create_proceeding", "manage_users"],
+    "inheritedPermissions": ["create_proceeding", "manage_users"]
   },
   "requestId": "req_..."
 }
@@ -66,6 +68,64 @@ Notes:
 
 - For authenticated bootstrap users, `GET /api/v1/me` returns `200` onboarding payload (never a membership/account `INTERNAL_ERROR` response).
 - Other APIs remain strict and reject requests until an active membership and account are present.
+
+## Enterprise Authorization (4 Layers)
+
+### 1) Platform roles
+
+- `super_admin`
+- `office_owner`
+- `admin`
+- `lawyer`
+- `trainee`
+- `finance`
+- `secretary`
+- `client_portal`
+- `external_collaborator`
+
+Legacy compatibility remains enabled for existing memberships:
+
+- `owner` -> `office_owner`
+- `staff` -> `secretary`
+- `client` -> `client_portal`
+
+### 2) Matter-level access roles
+
+Managed in `matter_access_entries`:
+
+- `lead_counsel`
+- `assigned_lawyer`
+- `reviewer`
+- `finance_access`
+- `read_only`
+- `restricted`
+- `client_access`
+
+### 3) Action permissions
+
+- `create_proceeding`
+- `create_appeal`
+- `create_cassation`
+- `open_execution`
+- `upload_document`
+- `approve_document`
+- `assign_users`
+- `close_matter`
+- `manage_billing`
+- `export_case`
+- `manage_clients`
+- `run_conflict_check`
+- `manage_hearings`
+- `manage_notifications`
+- `manage_users`
+- `ai_privileged_actions`
+
+### 4) Data visibility rules
+
+- Scoped roles can be limited to assigned matters via `matter_access_entries`.
+- `finance` is restricted to billing/export actions.
+- `trainee` confidential document visibility is controlled per matter assignment (`can_view_confidential_documents`).
+- `client_portal` users require explicit share (`client_access` matter assignment + shared proceeding/document flags).
 
 ## Cases
 
@@ -163,6 +223,7 @@ Required permission: `cases:create`.
   "prosecutorName": "optional",
   "policeStation": "optional",
   "relatedLawsuitProceedingId": "optional-uuid",
+  "clientVisible": false,
   "filingDate": "2026-05-27T10:00:00.000Z",
   "nextDeadlineAt": "2026-06-15T10:00:00.000Z",
   "feesAmountQar": 12500,
@@ -233,6 +294,7 @@ Transition payload for conversion endpoints:
   "prosecutorName": "optional",
   "policeStation": "optional",
   "relatedLawsuitProceedingId": "optional-uuid",
+  "clientVisible": false,
   "stage": "optional-stage-compatible-with-action-type",
   "filingDate": "2026-05-27T10:00:00.000Z",
   "nextDeadlineAt": "2026-06-20T10:00:00.000Z",
@@ -249,6 +311,7 @@ Lifecycle guarantees:
 - Each conversion creates a new row linked via `parentProceedingId`.
 - Duplicate conversions for the same source/action type are rejected with `CONFLICT`.
 - A single legal matter can include both court actions and complaint/report actions.
+- Access is enforced at both platform role and matter-assignment level.
 - Supported lifecycle links include:
 - `complaint/report -> lawsuit`
 - `complaint/report -> public_prosecution_complaint`
@@ -355,6 +418,9 @@ Client portal users must satisfy all of the following:
 - `documents.account_id` equals the authenticated account (tenant isolation).
 - Linked to the document's case through `case_participants`.
 - `visible_to_client = true`.
+- If linked to a matter proceeding, that proceeding must be shared (`matter_proceedings.client_visible = true`).
+- Document explicit share may also be granted through `document_access_grants`.
+- `trainee` users cannot access `classification = confidential` unless matter access explicitly allows confidential visibility.
 
 ## Internal Verification
 
