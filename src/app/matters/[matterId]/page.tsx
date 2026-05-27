@@ -16,6 +16,20 @@ import {
 import { requestApiWithSession, SessionRequiredError } from "@/lib/api/browser-client";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
+type IntakeType = "lawsuit" | "complaint_report" | "consultation" | "contract_document";
+type ActionType =
+  | "lawsuit"
+  | "appeal"
+  | "cassation"
+  | "execution"
+  | "urgent_request"
+  | "police_report"
+  | "public_prosecution_complaint"
+  | "cybercrime_report"
+  | "labor_complaint"
+  | "administrative_complaint"
+  | "regulatory_complaint";
+
 type MatterDetailResponse = {
   data: MatterDetail;
   requestId: string;
@@ -27,6 +41,7 @@ type MatterDetail = {
   title: string;
   description: string | null;
   status: string;
+  intakeType: IntakeType | null;
   openedAt: string | null;
   closedAt: string | null;
   updatedAt: string;
@@ -42,11 +57,24 @@ type Proceeding = {
   id: string;
   parentProceedingId: string | null;
   linkedCaseId: string | null;
+  actionType: ActionType;
   stage: string;
   status: string;
   caseNumber: string | null;
   court: { id: string | null; nameAr: string | null } | null;
+  circuit: string | null;
   department: string | null;
+  claimType: string | null;
+  judgmentSummary: string | null;
+  authority: string | null;
+  reportNumber: string | null;
+  submissionDate: string | null;
+  complainant: string | null;
+  respondent: string | null;
+  investigationSessions: Record<string, unknown>[] | null;
+  prosecutorName: string | null;
+  policeStation: string | null;
+  relatedLawsuitProceedingId: string | null;
   filingDate: string | null;
   nextDeadlineAt: string | null;
   feesAmountQar: number | null;
@@ -60,28 +88,59 @@ type Proceeding = {
 };
 
 type CreateProceedingForm = {
-  stage: "first_instance" | "appeal" | "cassation" | "execution" | "urgent_request" | "related_case";
+  actionType: ActionType;
   status: "open" | "pending" | "on_hold" | "closed" | "archived";
   caseNumber: string;
+  linkedCaseId: string;
   courtId: string;
+  circuit: string;
   department: string;
+  claimType: string;
+  judgmentSummary: string;
+  authority: string;
+  reportNumber: string;
+  submissionDate: string;
+  complainant: string;
+  respondent: string;
+  prosecutorName: string;
+  policeStation: string;
   filingDate: string;
   nextDeadlineAt: string;
   feesAmountQar: string;
-  linkedCaseId: string;
 };
 
 const EMPTY_PROCEEDING_FORM: CreateProceedingForm = {
-  stage: "first_instance",
+  actionType: "lawsuit",
   status: "open",
   caseNumber: "",
+  linkedCaseId: "",
   courtId: "",
+  circuit: "",
   department: "",
+  claimType: "",
+  judgmentSummary: "",
+  authority: "",
+  reportNumber: "",
+  submissionDate: "",
+  complainant: "",
+  respondent: "",
+  prosecutorName: "",
+  policeStation: "",
   filingDate: "",
   nextDeadlineAt: "",
   feesAmountQar: "",
-  linkedCaseId: "",
 };
+
+const complaintActionTypes: ActionType[] = [
+  "police_report",
+  "public_prosecution_complaint",
+  "cybercrime_report",
+  "labor_complaint",
+  "administrative_complaint",
+  "regulatory_complaint",
+];
+
+const lawsuitActionTypes: ActionType[] = ["lawsuit", "appeal", "cassation", "execution", "urgent_request"];
 
 export default function MatterDetailPage() {
   const router = useRouter();
@@ -160,7 +219,6 @@ export default function MatterDetailPage() {
     };
 
     void bootstrap();
-
     return () => {
       isMounted = false;
     };
@@ -175,15 +233,25 @@ export default function MatterDetailPage() {
     setActionSuccessMessage(null);
 
     try {
-      await requestApiWithSession<{ data: Proceeding }>(supabase, `/api/v1/matters/${matterId}/proceedings`, {
+      await requestApiWithSession(supabase, `/api/v1/matters/${matterId}/proceedings`, {
         method: "POST",
         body: JSON.stringify({
-          stage: proceedingForm.stage,
+          actionType: proceedingForm.actionType,
           status: proceedingForm.status,
           caseNumber: proceedingForm.caseNumber.trim() || undefined,
           linkedCaseId: proceedingForm.linkedCaseId.trim() || undefined,
           courtId: proceedingForm.courtId.trim() || undefined,
+          circuit: proceedingForm.circuit.trim() || undefined,
           department: proceedingForm.department.trim() || undefined,
+          claimType: proceedingForm.claimType.trim() || undefined,
+          judgmentSummary: proceedingForm.judgmentSummary.trim() || undefined,
+          authority: proceedingForm.authority.trim() || undefined,
+          reportNumber: proceedingForm.reportNumber.trim() || undefined,
+          submissionDate: toIsoOrUndefined(proceedingForm.submissionDate),
+          complainant: proceedingForm.complainant.trim() || undefined,
+          respondent: proceedingForm.respondent.trim() || undefined,
+          prosecutorName: proceedingForm.prosecutorName.trim() || undefined,
+          policeStation: proceedingForm.policeStation.trim() || undefined,
           filingDate: toIsoOrUndefined(proceedingForm.filingDate),
           nextDeadlineAt: toIsoOrUndefined(proceedingForm.nextDeadlineAt),
           feesAmountQar: proceedingForm.feesAmountQar ? Number(proceedingForm.feesAmountQar) : undefined,
@@ -206,9 +274,7 @@ export default function MatterDetailPage() {
     }
   }
 
-  async function handleTransition(
-    action: "appeal" | "cassation" | "execution",
-  ) {
+  async function handleTransition(action: TransitionAction) {
     if (!matterId || !selectedProceedingId) {
       setActionErrorMessage("Select a source proceeding first.");
       return;
@@ -222,7 +288,7 @@ export default function MatterDetailPage() {
     setActionSuccessMessage(null);
 
     try {
-      await requestApiWithSession<{ data: Proceeding }>(
+      await requestApiWithSession(
         supabase,
         `/api/v1/matters/${matterId}/proceedings/${selectedProceedingId}/${endpoint}`,
         {
@@ -244,6 +310,9 @@ export default function MatterDetailPage() {
     }
   }
 
+  const showComplaintFields = complaintActionTypes.includes(proceedingForm.actionType);
+  const showLawsuitFields = lawsuitActionTypes.includes(proceedingForm.actionType);
+
   return (
     <main className="app-shell">
       <div className="page-container">
@@ -253,7 +322,7 @@ export default function MatterDetailPage() {
             {matter?.title ?? `Matter ${matterId}`}
           </h1>
           <p className="muted" style={{ marginBottom: 14 }}>
-            Matter number: {matter?.matterNumber ?? "N/A"} | Status: {matter?.status ?? "N/A"}
+            Matter number: {matter?.matterNumber ?? "N/A"} | Status: {matter?.status ?? "N/A"} | Intake type: {matter?.intakeType ?? "N/A"}
           </p>
 
           <div className="actions">
@@ -287,6 +356,26 @@ export default function MatterDetailPage() {
               Open Execution File
             </button>
 
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => void handleTransition("complaint_to_lawsuit")}
+              disabled={!selectedProceedingId || runningActionKey !== null}
+            >
+              {runningActionKey?.startsWith("complaint_to_lawsuit:") ? <LoaderCircle size={18} className="animate-spin" /> : <Gavel size={18} />}
+              Complaint to Lawsuit
+            </button>
+
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => void handleTransition("complaint_to_prosecution")}
+              disabled={!selectedProceedingId || runningActionKey !== null}
+            >
+              {runningActionKey?.startsWith("complaint_to_prosecution:") ? <LoaderCircle size={18} className="animate-spin" /> : <Scale size={18} />}
+              Complaint to Prosecution
+            </button>
+
             <button type="button" className="button button-secondary" disabled title="Linking related case is pending API contract.">
               <Link2 size={18} />
               Link Related Case
@@ -304,7 +393,7 @@ export default function MatterDetailPage() {
           </div>
 
           <div style={{ marginTop: 14, display: "grid", gap: 8 }}>
-            <label style={{ display: "grid", gap: 6, maxWidth: 520 }}>
+            <label style={{ display: "grid", gap: 6, maxWidth: 560 }}>
               <span>Select Source Proceeding</span>
               <select
                 value={selectedProceedingId}
@@ -314,7 +403,7 @@ export default function MatterDetailPage() {
                 <option value="">Choose proceeding</option>
                 {(matter?.proceedings ?? []).map((row) => (
                   <option key={row.id} value={row.id}>
-                    {row.stage} | {row.caseNumber ?? row.id}
+                    {row.actionType} | {row.caseNumber ?? row.reportNumber ?? row.id}
                   </option>
                 ))}
               </select>
@@ -330,34 +419,39 @@ export default function MatterDetailPage() {
         </section>
 
         <section className="panel" style={{ marginBottom: 16 }}>
-          <h2 style={{ marginTop: 0 }}>Create Proceeding</h2>
+          <h2 style={{ marginTop: 0 }}>Create Proceeding / Complaint / Report</h2>
           <button
             type="button"
             className="button button-primary"
             onClick={() => setShowProceedingForm((value) => !value)}
           >
             <CirclePlus size={18} />
-            {showProceedingForm ? "Hide Proceeding Form" : "Create Proceeding"}
+            {showProceedingForm ? "Hide Form" : "Create Action"}
           </button>
 
           {showProceedingForm ? (
             <form onSubmit={handleCreateProceeding} style={{ marginTop: 14, display: "grid", gap: 12 }}>
               <label style={{ display: "grid", gap: 6 }}>
-                <span>Stage</span>
+                <span>Action Type</span>
                 <select
-                  value={proceedingForm.stage}
+                  value={proceedingForm.actionType}
                   onChange={(event) => {
-                    const stage = event.target.value as CreateProceedingForm["stage"];
-                    setProceedingForm((value) => ({ ...value, stage }));
+                    const actionType = event.target.value as ActionType;
+                    setProceedingForm((value) => ({ ...value, actionType }));
                   }}
                   style={inputStyle}
                 >
-                  <option value="first_instance">first_instance</option>
+                  <option value="lawsuit">lawsuit</option>
                   <option value="appeal">appeal</option>
                   <option value="cassation">cassation</option>
                   <option value="execution">execution</option>
                   <option value="urgent_request">urgent_request</option>
-                  <option value="related_case">related_case</option>
+                  <option value="police_report">police_report</option>
+                  <option value="public_prosecution_complaint">public_prosecution_complaint</option>
+                  <option value="cybercrime_report">cybercrime_report</option>
+                  <option value="labor_complaint">labor_complaint</option>
+                  <option value="administrative_complaint">administrative_complaint</option>
+                  <option value="regulatory_complaint">regulatory_complaint</option>
                 </select>
               </label>
 
@@ -379,32 +473,123 @@ export default function MatterDetailPage() {
                 </select>
               </label>
 
-              <label style={{ display: "grid", gap: 6 }}>
-                <span>Case Number</span>
-                <input
-                  value={proceedingForm.caseNumber}
-                  onChange={(event) => setProceedingForm((value) => ({ ...value, caseNumber: event.target.value }))}
-                  style={inputStyle}
-                />
-              </label>
+              {showLawsuitFields ? (
+                <div style={subPanelStyle}>
+                  <p style={subPanelTitleStyle}>Lawsuit / Court Fields</p>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span>Case Number</span>
+                    <input
+                      value={proceedingForm.caseNumber}
+                      onChange={(event) => setProceedingForm((value) => ({ ...value, caseNumber: event.target.value }))}
+                      style={inputStyle}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span>Court ID (optional UUID)</span>
+                    <input
+                      value={proceedingForm.courtId}
+                      onChange={(event) => setProceedingForm((value) => ({ ...value, courtId: event.target.value }))}
+                      style={inputStyle}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span>Circuit</span>
+                    <input
+                      value={proceedingForm.circuit}
+                      onChange={(event) => setProceedingForm((value) => ({ ...value, circuit: event.target.value }))}
+                      style={inputStyle}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span>Department</span>
+                    <input
+                      value={proceedingForm.department}
+                      onChange={(event) => setProceedingForm((value) => ({ ...value, department: event.target.value }))}
+                      style={inputStyle}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span>Claim Type</span>
+                    <input
+                      value={proceedingForm.claimType}
+                      onChange={(event) => setProceedingForm((value) => ({ ...value, claimType: event.target.value }))}
+                      style={inputStyle}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span>Judgment Summary</span>
+                    <textarea
+                      rows={3}
+                      value={proceedingForm.judgmentSummary}
+                      onChange={(event) => setProceedingForm((value) => ({ ...value, judgmentSummary: event.target.value }))}
+                      style={{ ...inputStyle, resize: "vertical", padding: 10 }}
+                    />
+                  </label>
+                </div>
+              ) : null}
 
-              <label style={{ display: "grid", gap: 6 }}>
-                <span>Department</span>
-                <input
-                  value={proceedingForm.department}
-                  onChange={(event) => setProceedingForm((value) => ({ ...value, department: event.target.value }))}
-                  style={inputStyle}
-                />
-              </label>
-
-              <label style={{ display: "grid", gap: 6 }}>
-                <span>Court ID (optional UUID)</span>
-                <input
-                  value={proceedingForm.courtId}
-                  onChange={(event) => setProceedingForm((value) => ({ ...value, courtId: event.target.value }))}
-                  style={inputStyle}
-                />
-              </label>
+              {showComplaintFields ? (
+                <div style={subPanelStyle}>
+                  <p style={subPanelTitleStyle}>Complaint / Report Fields</p>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span>Authority</span>
+                    <input
+                      value={proceedingForm.authority}
+                      onChange={(event) => setProceedingForm((value) => ({ ...value, authority: event.target.value }))}
+                      style={inputStyle}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span>Report Number</span>
+                    <input
+                      value={proceedingForm.reportNumber}
+                      onChange={(event) => setProceedingForm((value) => ({ ...value, reportNumber: event.target.value }))}
+                      style={inputStyle}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span>Submission Date</span>
+                    <input
+                      type="datetime-local"
+                      value={proceedingForm.submissionDate}
+                      onChange={(event) => setProceedingForm((value) => ({ ...value, submissionDate: event.target.value }))}
+                      style={inputStyle}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span>Complainant</span>
+                    <input
+                      value={proceedingForm.complainant}
+                      onChange={(event) => setProceedingForm((value) => ({ ...value, complainant: event.target.value }))}
+                      style={inputStyle}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span>Accused/Respondent</span>
+                    <input
+                      value={proceedingForm.respondent}
+                      onChange={(event) => setProceedingForm((value) => ({ ...value, respondent: event.target.value }))}
+                      style={inputStyle}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span>Prosecutor</span>
+                    <input
+                      value={proceedingForm.prosecutorName}
+                      onChange={(event) => setProceedingForm((value) => ({ ...value, prosecutorName: event.target.value }))}
+                      style={inputStyle}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span>Police Station</span>
+                    <input
+                      value={proceedingForm.policeStation}
+                      onChange={(event) => setProceedingForm((value) => ({ ...value, policeStation: event.target.value }))}
+                      style={inputStyle}
+                    />
+                  </label>
+                </div>
+              ) : null}
 
               <label style={{ display: "grid", gap: 6 }}>
                 <span>Linked Case ID (optional UUID)</span>
@@ -453,7 +638,7 @@ export default function MatterDetailPage() {
 
               <button type="submit" className="button button-primary" disabled={creatingProceeding} style={{ width: "fit-content" }}>
                 {creatingProceeding ? <LoaderCircle size={18} className="animate-spin" /> : <CirclePlus size={18} />}
-                {creatingProceeding ? "Creating..." : "Create Proceeding"}
+                {creatingProceeding ? "Creating..." : "Create Action"}
               </button>
             </form>
           ) : null}
@@ -477,7 +662,7 @@ export default function MatterDetailPage() {
 
           {!loading && !errorMessage && matter && matter.proceedings.length === 0 ? (
             <p className="muted" style={{ margin: 0 }}>
-              No proceedings found for this matter yet.
+              No proceedings or complaints found for this matter yet.
             </p>
           ) : null}
 
@@ -495,9 +680,9 @@ export default function MatterDetailPage() {
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
                     <div>
-                      <strong>{row.stage}</strong>
+                      <strong>{row.actionType}</strong>
                       <p className="muted" style={{ marginTop: 4 }}>
-                        {row.caseNumber ?? "N/A"} - {row.court?.nameAr ?? "N/A"}
+                        {row.caseNumber ?? row.reportNumber ?? "N/A"} - {row.court?.nameAr ?? row.authority ?? "N/A"}
                       </p>
                     </div>
                     <span className="status-chip">{row.status}</span>
@@ -508,9 +693,16 @@ export default function MatterDetailPage() {
                       marginTop: 12,
                       display: "grid",
                       gap: 8,
-                      gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+                      gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
                     }}
                   >
+                    <span>Stage: {row.stage}</span>
+                    <span>Circuit/Dept: {row.circuit ?? row.department ?? "N/A"}</span>
+                    <span>Claim: {row.claimType ?? "N/A"}</span>
+                    <span>Complainant: {row.complainant ?? "N/A"}</span>
+                    <span>Respondent: {row.respondent ?? "N/A"}</span>
+                    <span>Sessions: {row.investigationSessions?.length ?? 0}</span>
+                    <span>Prosecutor/Station: {row.prosecutorName ?? row.policeStation ?? "N/A"}</span>
                     <span>Hearings: {row.hearings.length}</span>
                     <span>Documents: {row.documents.length}</span>
                     <span>Tasks: {row.tasks.length}</span>
@@ -529,17 +721,28 @@ export default function MatterDetailPage() {
   );
 }
 
-const transitionEndpointByAction = {
+type TransitionAction =
+  | "appeal"
+  | "cassation"
+  | "execution"
+  | "complaint_to_lawsuit"
+  | "complaint_to_prosecution";
+
+const transitionEndpointByAction: Record<TransitionAction, string> = {
   appeal: "convert-to-appeal",
   cassation: "convert-to-cassation",
   execution: "open-execution",
-} as const;
+  complaint_to_lawsuit: "convert-to-lawsuit",
+  complaint_to_prosecution: "convert-to-prosecution-case",
+};
 
-const successMessageByAction = {
+const successMessageByAction: Record<TransitionAction, string> = {
   appeal: "Appeal proceeding created.",
   cassation: "Cassation proceeding created.",
   execution: "Execution proceeding opened.",
-} as const;
+  complaint_to_lawsuit: "Complaint converted to lawsuit.",
+  complaint_to_prosecution: "Complaint converted to prosecution case.",
+};
 
 const inputStyle: CSSProperties = {
   width: "100%",
@@ -549,6 +752,21 @@ const inputStyle: CSSProperties = {
   padding: "8px 12px",
   fontSize: 14,
   background: "white",
+};
+
+const subPanelStyle: CSSProperties = {
+  border: "1px solid var(--line)",
+  borderRadius: 8,
+  padding: 12,
+  display: "grid",
+  gap: 10,
+  background: "rgba(255, 255, 255, 0.7)",
+};
+
+const subPanelTitleStyle: CSSProperties = {
+  margin: 0,
+  fontWeight: 700,
+  color: "var(--ink)",
 };
 
 function toIsoOrUndefined(value: string) {

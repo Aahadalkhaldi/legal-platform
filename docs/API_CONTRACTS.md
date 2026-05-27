@@ -114,11 +114,19 @@ Required permission: `cases:create`.
   "matterNumber": "MAT-2026-001",
   "description": "Master legal matter for all court stages",
   "status": "open",
+  "intakeType": "lawsuit",
   "clientId": "uuid",
   "leadLawyerUserId": "uuid",
   "openedAt": "2026-05-27T09:00:00.000Z"
 }
 ```
+
+`intakeType` values:
+
+- `lawsuit`
+- `complaint_report`
+- `consultation`
+- `contract_document`
 
 `GET /api/v1/matters/{matterId}`
 
@@ -131,12 +139,30 @@ Required permission: `cases:create`.
 
 ```json
 {
+  "actionType": "lawsuit",
   "stage": "first_instance",
   "status": "open",
   "caseNumber": "2026/1042",
   "linkedCaseId": "uuid",
   "courtId": "uuid",
+  "circuit": "Commercial Chamber",
   "department": "Commercial",
+  "claimType": "contract_dispute",
+  "judgmentSummary": "optional summary",
+  "authority": "optional complaint authority",
+  "reportNumber": "optional complaint/report number",
+  "submissionDate": "2026-05-27T10:00:00.000Z",
+  "complainant": "Company A",
+  "respondent": "Company B",
+  "investigationSessions": [
+    {
+      "date": "2026-05-27T11:00:00.000Z",
+      "notes": "intake session"
+    }
+  ],
+  "prosecutorName": "optional",
+  "policeStation": "optional",
+  "relatedLawsuitProceedingId": "optional-uuid",
   "filingDate": "2026-05-27T10:00:00.000Z",
   "nextDeadlineAt": "2026-06-15T10:00:00.000Z",
   "feesAmountQar": 12500,
@@ -146,31 +172,68 @@ Required permission: `cases:create`.
 }
 ```
 
+`actionType` values:
+
+- `lawsuit`
+- `appeal`
+- `cassation`
+- `execution`
+- `urgent_request`
+- `police_report`
+- `public_prosecution_complaint`
+- `cybercrime_report`
+- `labor_complaint`
+- `administrative_complaint`
+- `regulatory_complaint`
+
+`stage` is optional for most clients and is resolved from `actionType` server-side when omitted.
+
 `POST /api/v1/matters/{matterId}/proceedings/{proceedingId}/convert-to-appeal`
 
 Required permission: `cases:update`.  
-Creates a new `appeal` proceeding with `parentProceedingId = proceedingId`.
+Creates a new `appeal` action with `parentProceedingId = proceedingId`.
 Allowed only when source stage is `first_instance`.
 
 `POST /api/v1/matters/{matterId}/proceedings/{proceedingId}/convert-to-cassation`
 
 Required permission: `cases:update`.  
-Creates a new `cassation` proceeding with `parentProceedingId = proceedingId`.
+Creates a new `cassation` action with `parentProceedingId = proceedingId`.
 Allowed only when source stage is `appeal`.
 
 `POST /api/v1/matters/{matterId}/proceedings/{proceedingId}/open-execution`
 
 Required permission: `cases:update`.  
-Creates a new `execution` proceeding with `parentProceedingId = proceedingId`.
+Creates a new `execution` action with `parentProceedingId = proceedingId`.
 Cannot open execution from an `execution` source proceeding.
 
-Transition payload for conversion/open-execution endpoints:
+`POST /api/v1/matters/{matterId}/proceedings/{proceedingId}/convert-to-lawsuit`
+
+Required permission: `cases:update`.  
+Creates a new `lawsuit` action from a complaint/report source and links the source row via `relatedLawsuitProceedingId`.
+
+`POST /api/v1/matters/{matterId}/proceedings/{proceedingId}/convert-to-prosecution-case`
+
+Required permission: `cases:update`.  
+Creates a new `public_prosecution_complaint` action from a complaint/report source.
+
+Transition payload for conversion endpoints:
 
 ```json
 {
   "caseNumber": "2026/221",
   "courtId": "uuid",
+  "circuit": "Appeal Chamber",
   "department": "Appeals",
+  "claimType": "damages",
+  "authority": "Public Prosecution",
+  "reportNumber": "PP-123",
+  "submissionDate": "2026-05-27T10:00:00.000Z",
+  "complainant": "Company A",
+  "respondent": "Company B",
+  "prosecutorName": "optional",
+  "policeStation": "optional",
+  "relatedLawsuitProceedingId": "optional-uuid",
+  "stage": "optional-stage-compatible-with-action-type",
   "filingDate": "2026-05-27T10:00:00.000Z",
   "nextDeadlineAt": "2026-06-20T10:00:00.000Z",
   "feesAmountQar": 4000,
@@ -182,9 +245,15 @@ Transition payload for conversion/open-execution endpoints:
 
 Lifecycle guarantees:
 
-- Previous proceedings are never overwritten during stage conversion.
-- Each conversion creates a new proceeding row linked via `parentProceedingId`.
-- Duplicate transitions for the same source/stage are rejected with `CONFLICT`.
+- Previous proceedings are never overwritten during conversions.
+- Each conversion creates a new row linked via `parentProceedingId`.
+- Duplicate conversions for the same source/action type are rejected with `CONFLICT`.
+- A single legal matter can include both court actions and complaint/report actions.
+- Supported lifecycle links include:
+- `complaint/report -> lawsuit`
+- `complaint/report -> public_prosecution_complaint`
+- `lawsuit/appeal/cassation -> execution`
+- `first_instance -> appeal -> cassation`
 
 ## Timeline and Client Updates
 

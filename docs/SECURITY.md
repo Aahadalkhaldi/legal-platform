@@ -17,6 +17,13 @@ The `account_memberships_owner_lockdown` trigger prevents:
 - suspending, deleting, or changing the last active owner;
 - leaving an account without an active owner.
 
+## Legal Matters
+
+- `legal_matters` and `matter_proceedings` are tenant-scoped by `account_id` with RLS enabled.
+- Proceeding lifecycle actions (`convert-to-appeal`, `convert-to-cassation`, `open-execution`, `convert-to-lawsuit`, `convert-to-prosecution-case`) require `cases:update`.
+- Complaint/report actions and court actions remain under the same `legal_matter_id`; conversions create new rows and keep prior rows immutable for legal traceability.
+- Duplicate child conversions are constrained by `(account_id, parent_proceeding_id, action_type)` for active rows.
+
 ## Documents
 
 - Storage bucket `legal-documents` is private.

@@ -15,7 +15,7 @@ export async function GET(request: Request) {
 
     let query = supabase
       .from("legal_matters")
-      .select("id, matter_number, title, status, opened_at, closed_at, updated_at, client:clients(id, full_name)")
+      .select("id, matter_number, title, status, intake_type, opened_at, closed_at, updated_at, client:clients(id, full_name)")
       .eq("account_id", context.accountId)
       .is("deleted_at", null)
       .order("updated_at", { ascending: false })
@@ -56,6 +56,7 @@ export async function GET(request: Request) {
         matterNumber: row.matter_number,
         title: row.title,
         status: row.status,
+        intakeType: row.intake_type,
         openedAt: row.opened_at,
         closedAt: row.closed_at,
         updatedAt: row.updated_at,
@@ -118,6 +119,7 @@ export async function POST(request: Request) {
         title: payload.title,
         description: payload.description ?? null,
         status: payload.status,
+        intake_type: payload.intakeType,
         opened_at: payload.openedAt ?? new Date().toISOString(),
         created_by: context.userId,
         updated_by: context.userId,

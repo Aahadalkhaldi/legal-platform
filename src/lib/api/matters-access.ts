@@ -54,7 +54,7 @@ export async function loadMatterProceeding(
 ) {
   const { data, error } = await supabase
     .from("matter_proceedings")
-    .select("id, account_id, legal_matter_id, stage, status, case_number, court_id, department, filing_date, next_deadline_at, fees_amount, metadata")
+    .select("id, account_id, legal_matter_id, action_type, stage, status, case_number, court_id, circuit, department, claim_type, judgment_summary, authority, report_number, submission_date, complainant, respondent, investigation_sessions, prosecutor_name, police_station, related_lawsuit_proceeding_id, filing_date, next_deadline_at, fees_amount, metadata")
     .eq("id", proceedingId)
     .eq("account_id", context.accountId)
     .eq("legal_matter_id", matterId)

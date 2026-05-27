@@ -28,7 +28,7 @@ export async function POST(
       .eq("account_id", context.accountId)
       .eq("legal_matter_id", matterId)
       .eq("parent_proceeding_id", source.id)
-      .eq("stage", "appeal")
+      .eq("action_type", "appeal")
       .is("deleted_at", null)
       .maybeSingle();
 
@@ -39,11 +39,24 @@ export async function POST(
 
     const insertPayload = buildProceedingTransitionInsert({
       sourceProceeding: source,
-      targetStage: "appeal",
+      targetActionType: "appeal",
       actorUserId: context.userId,
       caseNumber: payload.caseNumber ?? null,
       courtId: payload.courtId ?? null,
+      circuit: payload.circuit ?? null,
       department: payload.department ?? null,
+      claimType: payload.claimType ?? null,
+      judgmentSummary: payload.judgmentSummary ?? null,
+      authority: payload.authority ?? null,
+      reportNumber: payload.reportNumber ?? null,
+      submissionDate: payload.submissionDate ?? null,
+      complainant: payload.complainant ?? null,
+      respondent: payload.respondent ?? null,
+      investigationSessions: payload.investigationSessions ?? null,
+      prosecutorName: payload.prosecutorName ?? null,
+      policeStation: payload.policeStation ?? null,
+      relatedLawsuitProceedingId: payload.relatedLawsuitProceedingId ?? null,
+      targetStage: payload.stage ?? "appeal",
       filingDate: payload.filingDate ?? null,
       nextDeadlineAt: payload.nextDeadlineAt ?? null,
       feesAmount: payload.feesAmountQar ?? null,

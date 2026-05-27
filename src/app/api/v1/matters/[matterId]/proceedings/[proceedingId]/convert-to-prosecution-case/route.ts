@@ -1,6 +1,6 @@
 import { getAuthContext, requirePermission } from "@/lib/api/context";
 import { assertMatterAccess, loadMatterProceeding } from "@/lib/api/matters-access";
-import { buildProceedingTransitionInsert } from "@/lib/api/matter-proceedings";
+import { buildProceedingTransitionInsert, isComplaintActionType } from "@/lib/api/matter-proceedings";
 import { writeAuditEvent } from "@/lib/api/audit";
 import { ApiError, fail, ok, requestId } from "@/lib/api/errors";
 import { convertMatterProceedingSchema } from "@/lib/api/schemas";
@@ -21,6 +21,9 @@ export async function POST(
 
     await assertMatterAccess(supabase, context, matterId);
     const source = await loadMatterProceeding(supabase, context, matterId, proceedingId);
+    if (!isComplaintActionType(source.action_type)) {
+      throw new ApiError("CONFLICT", "Only complaints/reports can be converted to prosecution case.");
+    }
 
     const { data: existingTransition, error: existingError } = await supabase
       .from("matter_proceedings")
@@ -28,18 +31,19 @@ export async function POST(
       .eq("account_id", context.accountId)
       .eq("legal_matter_id", matterId)
       .eq("parent_proceeding_id", source.id)
-      .eq("action_type", "cassation")
+      .eq("action_type", "public_prosecution_complaint")
       .is("deleted_at", null)
       .maybeSingle();
 
     if (existingError) throw existingError;
     if (existingTransition) {
-      throw new ApiError("CONFLICT", "Cassation proceeding already exists for this source proceeding.");
+      throw new ApiError("CONFLICT", "Prosecution case proceeding already exists for this complaint/report.");
     }
 
     const insertPayload = buildProceedingTransitionInsert({
       sourceProceeding: source,
-      targetActionType: "cassation",
+      targetActionType: "public_prosecution_complaint",
+      targetStage: payload.stage ?? "related_case",
       actorUserId: context.userId,
       caseNumber: payload.caseNumber ?? null,
       courtId: payload.courtId ?? null,
@@ -56,7 +60,6 @@ export async function POST(
       prosecutorName: payload.prosecutorName ?? null,
       policeStation: payload.policeStation ?? null,
       relatedLawsuitProceedingId: payload.relatedLawsuitProceedingId ?? null,
-      targetStage: payload.stage ?? "cassation",
       filingDate: payload.filingDate ?? null,
       nextDeadlineAt: payload.nextDeadlineAt ?? null,
       feesAmount: payload.feesAmountQar ?? null,
@@ -73,7 +76,7 @@ export async function POST(
 
     await writeAuditEvent({
       context,
-      action: "MATTER_PROCEEDING_CASSATION_CREATED",
+      action: "MATTER_PROCEEDING_COMPLAINT_CONVERTED_TO_PROSECUTION_CASE",
       targetType: "matter_proceeding",
       targetId: data.id,
       requestId: reqId,

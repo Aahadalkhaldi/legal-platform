@@ -57,6 +57,7 @@ export async function GET(request: Request, contextParams: { params: Promise<{ m
         title: matter.title,
         description: matter.description,
         status: matter.status,
+        intakeType: matter.intake_type,
         openedAt: matter.opened_at,
         closedAt: matter.closed_at,
         updatedAt: matter.updated_at,
@@ -66,11 +67,24 @@ export async function GET(request: Request, contextParams: { params: Promise<{ m
           parentProceedingId: row.parent_proceeding_id,
           linkedCaseId: row.linked_case_id,
           linkedCase: extractLinkedCase(row.linked_case),
+          actionType: row.action_type,
           stage: row.stage,
           status: row.status,
           caseNumber: row.case_number,
           court: extractCourt(row.court),
+          circuit: row.circuit,
           department: row.department,
+          claimType: row.claim_type,
+          judgmentSummary: row.judgment_summary,
+          authority: row.authority,
+          reportNumber: row.report_number,
+          submissionDate: row.submission_date,
+          complainant: row.complainant,
+          respondent: row.respondent,
+          investigationSessions: row.investigation_sessions,
+          prosecutorName: row.prosecutor_name,
+          policeStation: row.police_station,
+          relatedLawsuitProceedingId: row.related_lawsuit_proceeding_id,
           filingDate: row.filing_date,
           nextDeadlineAt: row.next_deadline_at,
           feesAmountQar: row.fees_amount,
@@ -128,7 +142,7 @@ async function loadProceedings(
 ) {
   const { data, error } = await supabase
     .from("matter_proceedings")
-    .select("id, parent_proceeding_id, linked_case_id, stage, status, case_number, department, filing_date, next_deadline_at, fees_amount, metadata, created_at, updated_at, court:courts(id, name_ar), linked_case:cases(id, case_number, title, status, stage)")
+    .select("id, parent_proceeding_id, linked_case_id, action_type, stage, status, case_number, circuit, department, claim_type, judgment_summary, authority, report_number, submission_date, complainant, respondent, investigation_sessions, prosecutor_name, police_station, related_lawsuit_proceeding_id, filing_date, next_deadline_at, fees_amount, metadata, created_at, updated_at, court:courts(id, name_ar), linked_case:cases(id, case_number, title, status, stage)")
     .eq("account_id", accountId)
     .eq("legal_matter_id", matterId)
     .is("deleted_at", null)

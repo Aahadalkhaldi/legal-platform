@@ -12,6 +12,7 @@ type MatterSummary = {
   matterNumber: string | null;
   title: string;
   status: string;
+  intakeType: IntakeType | null;
   openedAt: string | null;
   closedAt: string | null;
   updatedAt: string;
@@ -27,11 +28,40 @@ type MatterListResponse = {
   };
 };
 
+type CreateMatterResponse = {
+  data: {
+    id: string;
+  };
+};
+
+type IntakeType = "lawsuit" | "complaint_report" | "consultation" | "contract_document";
+type ComplaintActionType =
+  | "police_report"
+  | "public_prosecution_complaint"
+  | "cybercrime_report"
+  | "labor_complaint"
+  | "administrative_complaint"
+  | "regulatory_complaint";
+
 type CreateMatterForm = {
   title: string;
   matterNumber: string;
   description: string;
   status: "open" | "on_hold" | "closed" | "archived";
+  intakeType: IntakeType;
+  lawsuitCaseNumber: string;
+  lawsuitCourtId: string;
+  lawsuitCircuit: string;
+  lawsuitDepartment: string;
+  lawsuitClaimType: string;
+  complaintActionType: ComplaintActionType;
+  complaintAuthority: string;
+  complaintReportNumber: string;
+  complaintSubmissionDate: string;
+  complaintComplainant: string;
+  complaintRespondent: string;
+  complaintProsecutorName: string;
+  complaintPoliceStation: string;
 };
 
 const EMPTY_FORM: CreateMatterForm = {
@@ -39,6 +69,20 @@ const EMPTY_FORM: CreateMatterForm = {
   matterNumber: "",
   description: "",
   status: "open",
+  intakeType: "lawsuit",
+  lawsuitCaseNumber: "",
+  lawsuitCourtId: "",
+  lawsuitCircuit: "",
+  lawsuitDepartment: "",
+  lawsuitClaimType: "",
+  complaintActionType: "police_report",
+  complaintAuthority: "",
+  complaintReportNumber: "",
+  complaintSubmissionDate: "",
+  complaintComplainant: "",
+  complaintRespondent: "",
+  complaintProsecutorName: "",
+  complaintPoliceStation: "",
 };
 
 export default function MattersPage() {
@@ -98,7 +142,6 @@ export default function MattersPage() {
     };
 
     void bootstrap();
-
     return () => {
       isMounted = false;
     };
@@ -110,15 +153,45 @@ export default function MattersPage() {
     setCreateErrorMessage(null);
 
     try {
-      await requestApiWithSession<{ data: MatterSummary }>(supabase, "/api/v1/matters", {
+      const matterPayload = await requestApiWithSession<CreateMatterResponse>(supabase, "/api/v1/matters", {
         method: "POST",
         body: JSON.stringify({
           title: createForm.title.trim(),
           matterNumber: createForm.matterNumber.trim() || undefined,
           description: createForm.description.trim() || undefined,
           status: createForm.status,
+          intakeType: createForm.intakeType,
         }),
       });
+
+      const matterId = matterPayload.data.id;
+      if (createForm.intakeType === "lawsuit") {
+        await requestApiWithSession(supabase, `/api/v1/matters/${matterId}/proceedings`, {
+          method: "POST",
+          body: JSON.stringify({
+            actionType: "lawsuit",
+            caseNumber: createForm.lawsuitCaseNumber.trim() || undefined,
+            courtId: createForm.lawsuitCourtId.trim() || undefined,
+            circuit: createForm.lawsuitCircuit.trim() || undefined,
+            department: createForm.lawsuitDepartment.trim() || undefined,
+            claimType: createForm.lawsuitClaimType.trim() || undefined,
+          }),
+        });
+      } else if (createForm.intakeType === "complaint_report") {
+        await requestApiWithSession(supabase, `/api/v1/matters/${matterId}/proceedings`, {
+          method: "POST",
+          body: JSON.stringify({
+            actionType: createForm.complaintActionType,
+            authority: createForm.complaintAuthority.trim() || undefined,
+            reportNumber: createForm.complaintReportNumber.trim() || undefined,
+            submissionDate: toIsoOrUndefined(createForm.complaintSubmissionDate),
+            complainant: createForm.complaintComplainant.trim() || undefined,
+            respondent: createForm.complaintRespondent.trim() || undefined,
+            prosecutorName: createForm.complaintProsecutorName.trim() || undefined,
+            policeStation: createForm.complaintPoliceStation.trim() || undefined,
+          }),
+        });
+      }
 
       setCreateForm(EMPTY_FORM);
       setShowCreateForm(false);
@@ -152,7 +225,7 @@ export default function MattersPage() {
           <p className="eyebrow">Legal Matter Lifecycle</p>
           <h1 style={{ margin: "8px 0 12px", fontSize: 34 }}>Matters List</h1>
           <p className="muted" style={{ marginBottom: 18 }}>
-            Manage legal matters and create new files with live API integration.
+            Manage lawsuits, complaints/reports, consultations, and contract/document matters in one lifecycle.
           </p>
 
           <div className="actions">
@@ -222,6 +295,150 @@ export default function MattersPage() {
                 </select>
               </label>
 
+              <label style={{ display: "grid", gap: 6 }}>
+                <span>Is this matter starting as?</span>
+                <select
+                  value={createForm.intakeType}
+                  onChange={(event) => {
+                    const intakeType = event.target.value as IntakeType;
+                    setCreateForm((value) => ({ ...value, intakeType }));
+                  }}
+                  style={inputStyle}
+                >
+                  <option value="lawsuit">Lawsuit</option>
+                  <option value="complaint_report">Complaint/Report</option>
+                  <option value="consultation">Consultation</option>
+                  <option value="contract_document">Contract/Document matter</option>
+                </select>
+              </label>
+
+              {createForm.intakeType === "lawsuit" ? (
+                <div style={subPanelStyle}>
+                  <p style={subPanelTitleStyle}>Initial Lawsuit Data</p>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span>Case Number</span>
+                    <input
+                      value={createForm.lawsuitCaseNumber}
+                      onChange={(event) => setCreateForm((value) => ({ ...value, lawsuitCaseNumber: event.target.value }))}
+                      style={inputStyle}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span>Court ID (optional UUID)</span>
+                    <input
+                      value={createForm.lawsuitCourtId}
+                      onChange={(event) => setCreateForm((value) => ({ ...value, lawsuitCourtId: event.target.value }))}
+                      style={inputStyle}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span>Circuit</span>
+                    <input
+                      value={createForm.lawsuitCircuit}
+                      onChange={(event) => setCreateForm((value) => ({ ...value, lawsuitCircuit: event.target.value }))}
+                      style={inputStyle}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span>Department</span>
+                    <input
+                      value={createForm.lawsuitDepartment}
+                      onChange={(event) => setCreateForm((value) => ({ ...value, lawsuitDepartment: event.target.value }))}
+                      style={inputStyle}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span>Claim Type</span>
+                    <input
+                      value={createForm.lawsuitClaimType}
+                      onChange={(event) => setCreateForm((value) => ({ ...value, lawsuitClaimType: event.target.value }))}
+                      style={inputStyle}
+                    />
+                  </label>
+                </div>
+              ) : null}
+
+              {createForm.intakeType === "complaint_report" ? (
+                <div style={subPanelStyle}>
+                  <p style={subPanelTitleStyle}>Initial Complaint/Report Data</p>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span>Complaint Type</span>
+                    <select
+                      value={createForm.complaintActionType}
+                      onChange={(event) => {
+                        const complaintActionType = event.target.value as ComplaintActionType;
+                        setCreateForm((value) => ({ ...value, complaintActionType }));
+                      }}
+                      style={inputStyle}
+                    >
+                      <option value="police_report">police_report</option>
+                      <option value="public_prosecution_complaint">public_prosecution_complaint</option>
+                      <option value="cybercrime_report">cybercrime_report</option>
+                      <option value="labor_complaint">labor_complaint</option>
+                      <option value="administrative_complaint">administrative_complaint</option>
+                      <option value="regulatory_complaint">regulatory_complaint</option>
+                    </select>
+                  </label>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span>Authority</span>
+                    <input
+                      value={createForm.complaintAuthority}
+                      onChange={(event) => setCreateForm((value) => ({ ...value, complaintAuthority: event.target.value }))}
+                      style={inputStyle}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span>Report Number</span>
+                    <input
+                      value={createForm.complaintReportNumber}
+                      onChange={(event) => setCreateForm((value) => ({ ...value, complaintReportNumber: event.target.value }))}
+                      style={inputStyle}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span>Submission Date</span>
+                    <input
+                      type="datetime-local"
+                      value={createForm.complaintSubmissionDate}
+                      onChange={(event) => setCreateForm((value) => ({ ...value, complaintSubmissionDate: event.target.value }))}
+                      style={inputStyle}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span>Complainant</span>
+                    <input
+                      value={createForm.complaintComplainant}
+                      onChange={(event) => setCreateForm((value) => ({ ...value, complaintComplainant: event.target.value }))}
+                      style={inputStyle}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span>Accused/Respondent</span>
+                    <input
+                      value={createForm.complaintRespondent}
+                      onChange={(event) => setCreateForm((value) => ({ ...value, complaintRespondent: event.target.value }))}
+                      style={inputStyle}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span>Prosecutor</span>
+                    <input
+                      value={createForm.complaintProsecutorName}
+                      onChange={(event) => setCreateForm((value) => ({ ...value, complaintProsecutorName: event.target.value }))}
+                      style={inputStyle}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span>Police Station</span>
+                    <input
+                      value={createForm.complaintPoliceStation}
+                      onChange={(event) => setCreateForm((value) => ({ ...value, complaintPoliceStation: event.target.value }))}
+                      style={inputStyle}
+                    />
+                  </label>
+                </div>
+              ) : null}
+
               {createErrorMessage ? (
                 <p role="alert" style={{ color: "#b42318", margin: 0 }}>
                   {createErrorMessage}
@@ -264,6 +481,7 @@ export default function MattersPage() {
                 <thead>
                   <tr style={{ textAlign: "left", borderBottom: "1px solid var(--line)" }}>
                     <th style={{ padding: "10px 8px" }}>Matter</th>
+                    <th style={{ padding: "10px 8px" }}>Type</th>
                     <th style={{ padding: "10px 8px" }}>Client</th>
                     <th style={{ padding: "10px 8px" }}>Status</th>
                     <th style={{ padding: "10px 8px" }}>Proceedings</th>
@@ -278,6 +496,7 @@ export default function MattersPage() {
                         <strong>{row.matterNumber ?? "N/A"}</strong>
                         <p className="muted" style={{ marginTop: 4 }}>{row.title}</p>
                       </td>
+                      <td style={{ padding: "12px 8px" }}>{row.intakeType ?? "N/A"}</td>
                       <td style={{ padding: "12px 8px" }}>{row.clientName ?? "N/A"}</td>
                       <td style={{ padding: "12px 8px" }}>{row.status}</td>
                       <td style={{ padding: "12px 8px" }}>{row.proceedingCount}</td>
@@ -309,3 +528,25 @@ const inputStyle: CSSProperties = {
   fontSize: 14,
   background: "white",
 };
+
+const subPanelStyle: CSSProperties = {
+  border: "1px solid var(--line)",
+  borderRadius: 8,
+  padding: 12,
+  display: "grid",
+  gap: 10,
+  background: "rgba(255, 255, 255, 0.7)",
+};
+
+const subPanelTitleStyle: CSSProperties = {
+  margin: 0,
+  fontWeight: 700,
+  color: "var(--ink)",
+};
+
+function toIsoOrUndefined(value: string) {
+  if (!value) return undefined;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return undefined;
+  return parsed.toISOString();
+}
