@@ -17,6 +17,8 @@ export async function GET(request: Request) {
         code: result.code,
         userId: result.userId,
         email: result.email,
+        debugStage: result.debugStage,
+        stageMarkers: result.stageMarkers,
       },
       requestId: reqId,
     });

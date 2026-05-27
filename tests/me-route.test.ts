@@ -12,6 +12,14 @@ vi.mock("@/lib/api/context", async () => {
 
 const userId = "11111111-1111-4111-8111-111111111111";
 const accountId = "22222222-2222-4222-8222-222222222222";
+const defaultStageMarkers = {
+  authUserLoaded: true,
+  membershipLookupStarted: true,
+  membershipLookupRlsFailed: false,
+  membershipLookupServiceRoleFallbackStarted: false,
+  membershipLookupServiceRoleFallbackSucceeded: false,
+  onboardingFallbackReturned: true,
+};
 
 describe("/api/v1/me bootstrap response", () => {
   beforeEach(() => {
@@ -52,6 +60,8 @@ describe("/api/v1/me bootstrap response", () => {
       code: "MEMBERSHIP_NOT_FOUND",
       userId,
       email: "client@example.com",
+      debugStage: "onboardingFallbackReturned",
+      stageMarkers: defaultStageMarkers,
     });
 
     const response = await GET(makeRequest());
@@ -64,6 +74,8 @@ describe("/api/v1/me bootstrap response", () => {
         code: "MEMBERSHIP_NOT_FOUND",
         userId,
         email: "client@example.com",
+        debugStage: "onboardingFallbackReturned",
+        stageMarkers: defaultStageMarkers,
       },
       requestId: "req-test",
     });
@@ -75,6 +87,8 @@ describe("/api/v1/me bootstrap response", () => {
       code: "ACCOUNT_NOT_FOUND",
       userId,
       email: "client@example.com",
+      debugStage: "accountLookupFailed",
+      stageMarkers: defaultStageMarkers,
     });
 
     const response = await GET(makeRequest());
@@ -87,6 +101,8 @@ describe("/api/v1/me bootstrap response", () => {
         code: "ACCOUNT_NOT_FOUND",
         userId,
         email: "client@example.com",
+        debugStage: "accountLookupFailed",
+        stageMarkers: defaultStageMarkers,
       },
       requestId: "req-test",
     });

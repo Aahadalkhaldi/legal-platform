@@ -51,6 +51,21 @@ type AuthenticatedSupabaseClient = BootstrapLookupClient & {
   };
 };
 
+type MeStageMarkers = {
+  authUserLoaded: boolean;
+  membershipLookupStarted: boolean;
+  membershipLookupRlsFailed: boolean;
+  membershipLookupServiceRoleFallbackStarted: boolean;
+  membershipLookupServiceRoleFallbackSucceeded: boolean;
+  onboardingFallbackReturned: boolean;
+};
+
+type MeDebugStage =
+  | keyof MeStageMarkers
+  | "membershipLookupPrimaryFailed"
+  | "membershipLookupServiceRoleFallbackFailed"
+  | "accountLookupFailed";
+
 export type MeAuthContextResult =
   | {
       status: "ready";
@@ -61,6 +76,8 @@ export type MeAuthContextResult =
       code: BootstrapErrorCode;
       userId: string;
       email: string | null;
+      debugStage: MeDebugStage;
+      stageMarkers: MeStageMarkers;
     };
 
 async function getAuthenticatedState(request: Request) {
@@ -97,58 +114,48 @@ async function getAuthenticatedState(request: Request) {
 }
 
 export async function resolveMeAuthContext(request: Request): Promise<MeAuthContextResult> {
+  const stageMarkers = createStageMarkers();
   const { supabase, user } = await getAuthenticatedState(request);
+  stageMarkers.authUserLoaded = true;
   const adminSupabase = getAdminSupabaseOrNull();
+  let debugStage: MeDebugStage | null = null;
 
-  const membershipResult = await loadActiveMembership(supabase, user.id);
+  stageMarkers.membershipLookupStarted = true;
+  const membershipResult = await safeLoadActiveMembership(supabase, user.id);
   let membership = membershipResult.data;
-  let membershipError = membershipResult.error;
 
-  if (membershipError && adminSupabase) {
-    const adminMembershipResult = await loadActiveMembership(adminSupabase, user.id);
-    membership = adminMembershipResult.data;
-    membershipError = adminMembershipResult.error;
-  }
-
-  if (membershipError) {
-    if (isAccessDeniedError(membershipError)) {
-      membership = null;
-      membershipError = null;
+  if (membershipResult.error) {
+    if (isAccessDeniedError(membershipResult.error)) {
+      stageMarkers.membershipLookupRlsFailed = true;
+      debugStage = "membershipLookupRlsFailed";
     } else {
-      throw new ApiError("INTERNAL_ERROR", "Unable to load account membership.");
+      debugStage = "membershipLookupPrimaryFailed";
+    }
+
+    if (adminSupabase) {
+      stageMarkers.membershipLookupServiceRoleFallbackStarted = true;
+      const adminMembershipResult = await safeLoadActiveMembership(adminSupabase, user.id);
+      if (!adminMembershipResult.error) {
+        stageMarkers.membershipLookupServiceRoleFallbackSucceeded = true;
+        membership = adminMembershipResult.data;
+      } else {
+        debugStage = "membershipLookupServiceRoleFallbackFailed";
+      }
     }
   }
 
   if (!membership) {
-    return {
-      status: "onboarding_required",
-      code: "MEMBERSHIP_NOT_FOUND",
-      userId: user.id,
-      email: user.email,
-    };
+    return onboardingResult("MEMBERSHIP_NOT_FOUND", user, stageMarkers, debugStage);
   }
 
   const accountLookupClient = adminSupabase ?? supabase;
-  const accountResult = await loadActiveAccount(accountLookupClient, membership.account_id);
-  let account = accountResult.data;
-  let accountError = accountResult.error;
-
-  if (accountError) {
-    if (isAccessDeniedError(accountError)) {
-      account = null;
-      accountError = null;
-    } else {
-      throw new ApiError("INTERNAL_ERROR", "Unable to load account.");
-    }
+  const accountResult = await safeLoadActiveAccount(accountLookupClient, membership.account_id);
+  if (accountResult.error) {
+    return onboardingResult("ACCOUNT_NOT_FOUND", user, stageMarkers, debugStage ?? "accountLookupFailed");
   }
 
-  if (!account) {
-    return {
-      status: "onboarding_required",
-      code: "ACCOUNT_NOT_FOUND",
-      userId: user.id,
-      email: user.email,
-    };
+  if (!accountResult.data) {
+    return onboardingResult("ACCOUNT_NOT_FOUND", user, stageMarkers, debugStage);
   }
 
   return {
@@ -160,6 +167,35 @@ export async function resolveMeAuthContext(request: Request): Promise<MeAuthCont
       role: membership.role as RoleName,
       permissions: Array.isArray(membership.permissions) ? membership.permissions : [],
     },
+  };
+}
+
+function createStageMarkers(): MeStageMarkers {
+  return {
+    authUserLoaded: false,
+    membershipLookupStarted: false,
+    membershipLookupRlsFailed: false,
+    membershipLookupServiceRoleFallbackStarted: false,
+    membershipLookupServiceRoleFallbackSucceeded: false,
+    onboardingFallbackReturned: false,
+  };
+}
+
+function onboardingResult(
+  code: BootstrapErrorCode,
+  user: { id: string; email: string | null },
+  stageMarkers: MeStageMarkers,
+  debugStage: MeDebugStage | null,
+): MeAuthContextResult {
+  stageMarkers.onboardingFallbackReturned = true;
+
+  return {
+    status: "onboarding_required",
+    code,
+    userId: user.id,
+    email: user.email,
+    debugStage: debugStage ?? "onboardingFallbackReturned",
+    stageMarkers,
   };
 }
 
@@ -182,6 +218,20 @@ async function loadActiveMembership(supabase: BootstrapLookupClient, userId: str
     .maybeSingle();
 }
 
+async function safeLoadActiveMembership(
+  supabase: BootstrapLookupClient,
+  userId: string,
+): Promise<SingleResult<MembershipRecord>> {
+  try {
+    return await loadActiveMembership(supabase, userId);
+  } catch (error) {
+    return {
+      data: null,
+      error,
+    };
+  }
+}
+
 async function loadActiveAccount(supabase: BootstrapLookupClient, accountId: string) {
   return supabase
     .from("accounts")
@@ -190,6 +240,20 @@ async function loadActiveAccount(supabase: BootstrapLookupClient, accountId: str
     .eq("status", "active")
     .is("deleted_at", null)
     .maybeSingle();
+}
+
+async function safeLoadActiveAccount(
+  supabase: BootstrapLookupClient,
+  accountId: string,
+): Promise<SingleResult<AccountRecord>> {
+  try {
+    return await loadActiveAccount(supabase, accountId);
+  } catch (error) {
+    return {
+      data: null,
+      error,
+    };
+  }
 }
 
 function isAccessDeniedError(error: unknown) {
@@ -222,10 +286,16 @@ export async function getAuthContext(request: Request): Promise<CurrentUser> {
   }
 
   if (result.code === "ACCOUNT_NOT_FOUND") {
-    throw new ApiError("ACCOUNT_NOT_FOUND", "The account for this membership is missing or inactive.");
+    throw new ApiError("ACCOUNT_NOT_FOUND", "The account for this membership is missing or inactive.", {
+      debugStage: result.debugStage,
+      stageMarkers: result.stageMarkers,
+    });
   }
 
-  throw new ApiError("MEMBERSHIP_NOT_FOUND", "No active account membership found for this user.");
+  throw new ApiError("MEMBERSHIP_NOT_FOUND", "No active account membership found for this user.", {
+    debugStage: result.debugStage,
+    stageMarkers: result.stageMarkers,
+  });
 }
 
 export function requirePermission(context: CurrentUser, permission: string) {

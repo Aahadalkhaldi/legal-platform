@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createClient } from "@supabase/supabase-js";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { GET } from "@/app/api/v1/me/route";
+import { getAuthContext } from "@/lib/api/context";
 
 vi.mock("@supabase/supabase-js", () => ({
   createClient: vi.fn(),
@@ -72,10 +73,148 @@ describe("/api/v1/me production bootstrap regression", () => {
         code: "MEMBERSHIP_NOT_FOUND",
         userId,
         email: "new-user@example.com",
+        debugStage: "membershipLookupRlsFailed",
+        stageMarkers: {
+          authUserLoaded: true,
+          membershipLookupStarted: true,
+          membershipLookupRlsFailed: true,
+          membershipLookupServiceRoleFallbackStarted: true,
+          membershipLookupServiceRoleFallbackSucceeded: true,
+          onboardingFallbackReturned: true,
+        },
       },
       requestId: "req-regression",
     });
     expect(body.error).toBeUndefined();
+  });
+
+  it("returns onboarding payload instead of INTERNAL_ERROR when fallback lookup also fails", async () => {
+    const publicClient = {
+      auth: {
+        getUser: vi.fn(async () => ({
+          data: { user: { id: userId, email: "new-user@example.com" } },
+          error: null,
+        })),
+      },
+      from: vi.fn((table: string) => {
+        if (table !== "account_memberships") {
+          throw new Error(`Unexpected public table: ${table}`);
+        }
+
+        return queryBuilder({
+          data: null,
+          error: {
+            code: "42501",
+            message: "permission denied for table account_memberships",
+            details: "new row violates row-level security policy",
+          },
+        });
+      }),
+    };
+
+    const adminClient = {
+      from: vi.fn((table: string) => {
+        if (table !== "account_memberships") {
+          throw new Error(`Unexpected admin table: ${table}`);
+        }
+
+        return queryBuilder({
+          data: null,
+          error: {
+            code: "XX000",
+            message: "unexpected upstream failure during fallback",
+            details: null,
+          },
+        });
+      }),
+    };
+
+    vi.mocked(createClient).mockReturnValue(publicClient as never);
+    vi.mocked(createSupabaseAdmin).mockReturnValue(adminClient as never);
+
+    const response = await GET(makeRequest());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      data: {
+        onboardingRequired: true,
+        code: "MEMBERSHIP_NOT_FOUND",
+        userId,
+        email: "new-user@example.com",
+        debugStage: "membershipLookupServiceRoleFallbackFailed",
+        stageMarkers: {
+          authUserLoaded: true,
+          membershipLookupStarted: true,
+          membershipLookupRlsFailed: true,
+          membershipLookupServiceRoleFallbackStarted: true,
+          membershipLookupServiceRoleFallbackSucceeded: false,
+          onboardingFallbackReturned: true,
+        },
+      },
+      requestId: "req-regression",
+    });
+    expect(body.error).toBeUndefined();
+  });
+
+  it("keeps strict rejection for non-/me APIs while exposing safe debug stage", async () => {
+    const publicClient = {
+      auth: {
+        getUser: vi.fn(async () => ({
+          data: { user: { id: userId, email: "new-user@example.com" } },
+          error: null,
+        })),
+      },
+      from: vi.fn((table: string) => {
+        if (table !== "account_memberships") {
+          throw new Error(`Unexpected public table: ${table}`);
+        }
+
+        return queryBuilder({
+          data: null,
+          error: {
+            code: "42501",
+            message: "permission denied for table account_memberships",
+            details: "new row violates row-level security policy",
+          },
+        });
+      }),
+    };
+
+    const adminClient = {
+      from: vi.fn((table: string) => {
+        if (table !== "account_memberships") {
+          throw new Error(`Unexpected admin table: ${table}`);
+        }
+
+        return queryBuilder({
+          data: null,
+          error: {
+            code: "XX000",
+            message: "unexpected upstream failure during fallback",
+            details: null,
+          },
+        });
+      }),
+    };
+
+    vi.mocked(createClient).mockReturnValue(publicClient as never);
+    vi.mocked(createSupabaseAdmin).mockReturnValue(adminClient as never);
+
+    await expect(getAuthContext(makeRequest())).rejects.toMatchObject({
+      code: "MEMBERSHIP_NOT_FOUND",
+      details: {
+        debugStage: "membershipLookupServiceRoleFallbackFailed",
+        stageMarkers: {
+          authUserLoaded: true,
+          membershipLookupStarted: true,
+          membershipLookupRlsFailed: true,
+          membershipLookupServiceRoleFallbackStarted: true,
+          membershipLookupServiceRoleFallbackSucceeded: false,
+          onboardingFallbackReturned: true,
+        },
+      },
+    });
   });
 });
 

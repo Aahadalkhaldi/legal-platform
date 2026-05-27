@@ -42,7 +42,16 @@ Bootstrap response for authenticated users missing membership/account linkage:
     "onboardingRequired": true,
     "code": "MEMBERSHIP_NOT_FOUND",
     "userId": "uuid",
-    "email": "user@example.com"
+    "email": "user@example.com",
+    "debugStage": "membershipLookupRlsFailed",
+    "stageMarkers": {
+      "authUserLoaded": true,
+      "membershipLookupStarted": true,
+      "membershipLookupRlsFailed": true,
+      "membershipLookupServiceRoleFallbackStarted": true,
+      "membershipLookupServiceRoleFallbackSucceeded": false,
+      "onboardingFallbackReturned": true
+    }
   },
   "requestId": "req_..."
 }
