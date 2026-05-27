@@ -3,7 +3,6 @@ import { createClient } from "@supabase/supabase-js";
 
 const TARGET = {
   email: "law@aletefaq.com",
-  userId: "cc0ccce0-19cb-4634-ba91-87d35f3a4813",
   accountName: "Aletefaq Law Firm",
   accountSlug: "aletefaq-law-firm",
   ownerFullName: "Aletefaq Law Firm Owner",
@@ -19,26 +18,24 @@ async function main() {
     account: "unchanged",
     membership: "unchanged",
     accountId: null,
+    authUserId: null,
   };
 
-  const authUser = await loadAuthUser(supabase);
-  const authEmail = authUser.email?.toLowerCase() ?? null;
-  if (authEmail && authEmail !== TARGET.email.toLowerCase()) {
-    throw new Error(
-      `Auth user email mismatch for ${TARGET.userId}. Expected ${TARGET.email}, got ${authUser.email}.`,
-    );
-  }
+  const authUser = await loadAuthUserByEmail(supabase, TARGET.email);
+  const authUserId = authUser.id;
+  summary.authUserId = authUserId;
 
-  const existingUser = await ensureUserRow({ supabase, dryRun });
+  const existingUser = await ensureUserRow({ supabase, dryRun, authUserId });
   summary.userRow = existingUser;
 
-  const account = await ensureAccount({ supabase, dryRun });
+  const account = await ensureAccount({ supabase, dryRun, authUserId });
   summary.account = account.status;
   summary.accountId = account.id;
 
   const membership = await ensureOwnerMembership({
     supabase,
     dryRun,
+    authUserId,
     accountId: account.id,
     now,
   });
@@ -60,20 +57,38 @@ function createServiceRoleClient() {
   });
 }
 
-async function loadAuthUser(supabase) {
-  const { data, error } = await supabase.auth.admin.getUserById(TARGET.userId);
-  if (error || !data?.user) {
-    throw new Error(`Auth user not found for ${TARGET.userId}. Create the auth user first.`);
+async function loadAuthUserByEmail(supabase, email) {
+  const normalizedEmail = email.toLowerCase();
+  const perPage = 200;
+  let page = 1;
+
+  while (page <= 100) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage });
+    if (error) {
+      throw new Error(`Failed to list auth users while searching for ${email}: ${error.message}`);
+    }
+
+    const users = data?.users ?? [];
+    const matchedUser = users.find((user) => (user.email ?? "").toLowerCase() === normalizedEmail);
+    if (matchedUser) {
+      return matchedUser;
+    }
+
+    if (users.length < perPage) {
+      break;
+    }
+
+    page += 1;
   }
 
-  return data.user;
+  throw new Error(`Auth user not found for email ${email}. Create the auth user first.`);
 }
 
-async function ensureUserRow({ supabase, dryRun }) {
+async function ensureUserRow({ supabase, dryRun, authUserId }) {
   const { data: existingUser, error: selectError } = await supabase
     .from("users")
     .select("id, email, full_name")
-    .eq("id", TARGET.userId)
+    .eq("id", authUserId)
     .maybeSingle();
 
   if (selectError) {
@@ -83,7 +98,7 @@ async function ensureUserRow({ supabase, dryRun }) {
   if (!existingUser) {
     if (!dryRun) {
       const { error: insertError } = await supabase.from("users").insert({
-        id: TARGET.userId,
+        id: authUserId,
         email: TARGET.email,
         full_name: TARGET.ownerFullName,
       });
@@ -106,7 +121,7 @@ async function ensureUserRow({ supabase, dryRun }) {
 
   if (Object.keys(updates).length > 0) {
     if (!dryRun) {
-      const { error: updateError } = await supabase.from("users").update(updates).eq("id", TARGET.userId);
+      const { error: updateError } = await supabase.from("users").update(updates).eq("id", authUserId);
       if (updateError) {
         throw new Error(`Failed to update users row: ${updateError.message}`);
       }
@@ -118,7 +133,7 @@ async function ensureUserRow({ supabase, dryRun }) {
   return "unchanged";
 }
 
-async function ensureAccount({ supabase, dryRun }) {
+async function ensureAccount({ supabase, dryRun, authUserId }) {
   const { data: existingAccount, error: selectError } = await supabase
     .from("accounts")
     .select("id, slug, name, status, deleted_at")
@@ -137,8 +152,8 @@ async function ensureAccount({ supabase, dryRun }) {
           name: TARGET.accountName,
           slug: TARGET.accountSlug,
           status: "active",
-          created_by: TARGET.userId,
-          updated_by: TARGET.userId,
+          created_by: authUserId,
+          updated_by: authUserId,
           deleted_at: null,
         })
         .select("id")
@@ -165,7 +180,7 @@ async function ensureAccount({ supabase, dryRun }) {
     updates.deleted_at = null;
   }
   if (Object.keys(updates).length > 0) {
-    updates.updated_by = TARGET.userId;
+    updates.updated_by = authUserId;
   }
 
   if (Object.keys(updates).length > 0 && !dryRun) {
@@ -181,7 +196,7 @@ async function ensureAccount({ supabase, dryRun }) {
   };
 }
 
-async function ensureOwnerMembership({ supabase, dryRun, accountId, now }) {
+async function ensureOwnerMembership({ supabase, dryRun, authUserId, accountId, now }) {
   if (accountId === "dry-run-generated-account-id") {
     return "created";
   }
@@ -190,7 +205,7 @@ async function ensureOwnerMembership({ supabase, dryRun, accountId, now }) {
     .from("account_memberships")
     .select("id, role, status, deleted_at, accepted_at")
     .eq("account_id", accountId)
-    .eq("user_id", TARGET.userId)
+    .eq("user_id", authUserId)
     .maybeSingle();
 
   if (selectError) {
@@ -201,15 +216,15 @@ async function ensureOwnerMembership({ supabase, dryRun, accountId, now }) {
     if (!dryRun) {
       const { error: insertError } = await supabase.from("account_memberships").insert({
         account_id: accountId,
-        user_id: TARGET.userId,
+        user_id: authUserId,
         role: "owner",
         status: "active",
         permissions: [],
-        invited_by: TARGET.userId,
+        invited_by: authUserId,
         invited_at: now,
         accepted_at: now,
-        created_by: TARGET.userId,
-        updated_by: TARGET.userId,
+        created_by: authUserId,
+        updated_by: authUserId,
         deleted_at: null,
       });
 
@@ -235,7 +250,7 @@ async function ensureOwnerMembership({ supabase, dryRun, accountId, now }) {
     updates.accepted_at = now;
   }
   if (Object.keys(updates).length > 0) {
-    updates.updated_by = TARGET.userId;
+    updates.updated_by = authUserId;
   }
 
   if (Object.keys(updates).length > 0 && !dryRun) {

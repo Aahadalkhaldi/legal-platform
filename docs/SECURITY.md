@@ -64,7 +64,6 @@ Sensitive actions write to `audit_logs`, including:
 - Script: `scripts/bootstrap-first-office-admin.mjs`
 - Purpose: idempotently bootstrap the first office account and owner membership for:
   - `law@aletefaq.com`
-  - `cc0ccce0-19cb-4634-ba91-87d35f3a4813`
 - Uses Supabase service role only (`SUPABASE_SERVICE_ROLE_KEY`) and never logs secrets.
 
 Required environment variables:
@@ -81,6 +80,7 @@ npm run bootstrap:first-office-admin
 
 Behavior:
 
+- Resolves the target auth user dynamically from Supabase Auth by email (`law@aletefaq.com`) and uses the returned `user.id`.
 - Ensures `public.users` row exists (with `full_name` and `email`) for the target auth user.
 - Ensures account `Aletefaq Law Firm` exists with slug `aletefaq-law-firm`.
 - Ensures target user has an active `owner` membership in that account.
