@@ -97,6 +97,95 @@ Writes `CASE_VIEWED` to `audit_logs`.
 
 Required permission: `cases:update`. Writes before/after snapshots to audit.
 
+## Legal Matters and Proceedings
+
+`GET /api/v1/matters?cursor=&limit=25&updated_after=`
+
+Returns account-scoped legal matters with client name and proceeding count.
+Client portal users only receive matters linked to their own `clients.user_id`.
+
+`POST /api/v1/matters`
+
+Required permission: `cases:create`.
+
+```json
+{
+  "title": "Commercial Contract Dispute",
+  "matterNumber": "MAT-2026-001",
+  "description": "Master legal matter for all court stages",
+  "status": "open",
+  "clientId": "uuid",
+  "leadLawyerUserId": "uuid",
+  "openedAt": "2026-05-27T09:00:00.000Z"
+}
+```
+
+`GET /api/v1/matters/{matterId}`
+
+Returns the legal matter plus a proceedings timeline.  
+Each proceeding includes linked hearings, documents, tasks, updates, parties, fees, and deadlines.
+
+`POST /api/v1/matters/{matterId}/proceedings`
+
+Required permission: `cases:create`.
+
+```json
+{
+  "stage": "first_instance",
+  "status": "open",
+  "caseNumber": "2026/1042",
+  "linkedCaseId": "uuid",
+  "courtId": "uuid",
+  "department": "Commercial",
+  "filingDate": "2026-05-27T10:00:00.000Z",
+  "nextDeadlineAt": "2026-06-15T10:00:00.000Z",
+  "feesAmountQar": 12500,
+  "metadata": {
+    "source": "manual"
+  }
+}
+```
+
+`POST /api/v1/matters/{matterId}/proceedings/{proceedingId}/convert-to-appeal`
+
+Required permission: `cases:update`.  
+Creates a new `appeal` proceeding with `parentProceedingId = proceedingId`.
+Allowed only when source stage is `first_instance`.
+
+`POST /api/v1/matters/{matterId}/proceedings/{proceedingId}/convert-to-cassation`
+
+Required permission: `cases:update`.  
+Creates a new `cassation` proceeding with `parentProceedingId = proceedingId`.
+Allowed only when source stage is `appeal`.
+
+`POST /api/v1/matters/{matterId}/proceedings/{proceedingId}/open-execution`
+
+Required permission: `cases:update`.  
+Creates a new `execution` proceeding with `parentProceedingId = proceedingId`.
+Cannot open execution from an `execution` source proceeding.
+
+Transition payload for conversion/open-execution endpoints:
+
+```json
+{
+  "caseNumber": "2026/221",
+  "courtId": "uuid",
+  "department": "Appeals",
+  "filingDate": "2026-05-27T10:00:00.000Z",
+  "nextDeadlineAt": "2026-06-20T10:00:00.000Z",
+  "feesAmountQar": 4000,
+  "metadata": {
+    "source": "manual"
+  }
+}
+```
+
+Lifecycle guarantees:
+
+- Previous proceedings are never overwritten during stage conversion.
+- Each conversion creates a new proceeding row linked via `parentProceedingId`.
+- Duplicate transitions for the same source/stage are rejected with `CONFLICT`.
+
 ## Timeline and Client Updates
 
 `GET /api/v1/cases/{caseId}/timeline`

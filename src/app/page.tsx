@@ -1,3 +1,4 @@
+import Link from "next/link";
 import {
   Bell,
   BriefcaseBusiness,
@@ -51,6 +52,10 @@ export default function Home() {
                 <ShieldCheck size={18} />
                 فحص API
               </a>
+              <Link className="button button-secondary" href="/matters">
+                <BriefcaseBusiness size={18} />
+                Matters Lifecycle
+              </Link>
               <a className="button button-secondary" href="/docs/API_CONTRACTS.md">
                 <FileLock2 size={18} />
                 عقود الواجهات

@@ -111,3 +111,47 @@ export const completeClientDocumentUploadSchema = clientDocumentUploadSchema.ext
   title: z.string().trim().min(1).max(180),
   documentType: z.string().trim().min(1).max(80).default("client_upload"),
 });
+
+export const matterStatusSchema = z.enum(["open", "on_hold", "closed", "archived"]);
+export const proceedingStageSchema = z.enum([
+  "first_instance",
+  "appeal",
+  "cassation",
+  "execution",
+  "urgent_request",
+  "related_case",
+]);
+export const proceedingStatusSchema = z.enum(["open", "pending", "on_hold", "closed", "archived"]);
+
+export const createLegalMatterSchema = z.object({
+  title: z.string().trim().min(2).max(240),
+  matterNumber: z.string().trim().max(80).optional(),
+  description: z.string().trim().max(5000).optional(),
+  status: matterStatusSchema.default("open"),
+  clientId: z.string().uuid().optional(),
+  leadLawyerUserId: z.string().uuid().optional(),
+  openedAt: z.string().datetime().optional(),
+});
+
+export const createMatterProceedingSchema = z.object({
+  stage: proceedingStageSchema,
+  status: proceedingStatusSchema.default("open"),
+  caseNumber: z.string().trim().max(80).optional(),
+  linkedCaseId: z.string().uuid().optional(),
+  courtId: z.string().uuid().optional(),
+  department: z.string().trim().max(120).optional(),
+  filingDate: z.string().datetime().optional(),
+  nextDeadlineAt: z.string().datetime().optional(),
+  feesAmountQar: z.number().nonnegative().optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+
+export const convertMatterProceedingSchema = z.object({
+  caseNumber: z.string().trim().max(80).optional(),
+  courtId: z.string().uuid().optional(),
+  department: z.string().trim().max(120).optional(),
+  filingDate: z.string().datetime().optional(),
+  nextDeadlineAt: z.string().datetime().optional(),
+  feesAmountQar: z.number().nonnegative().optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
