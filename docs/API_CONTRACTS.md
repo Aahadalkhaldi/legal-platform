@@ -53,6 +53,11 @@ Bootstrap response for authenticated users missing membership/account linkage:
 - `MEMBERSHIP_NOT_FOUND`: Auth user exists but has no active `account_memberships` row.
 - `ACCOUNT_NOT_FOUND`: Membership exists but target account is missing or inactive.
 
+Notes:
+
+- For authenticated bootstrap users, `GET /api/v1/me` returns `200` onboarding payload (never a membership/account `INTERNAL_ERROR` response).
+- Other APIs remain strict and reject requests until an active membership and account are present.
+
 ## Cases
 
 `GET /api/v1/cases?cursor=&limit=25&updated_after=`
