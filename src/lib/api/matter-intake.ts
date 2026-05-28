@@ -5,7 +5,7 @@ import type { CurrentUser } from "@/lib/types";
 
 export const MATTER_INTAKE_FALLBACK_STEPS = [
   "client_saved_in_metadata",
-  "opponent_saved_in_metadata",
+  "related_parties_saved_in_metadata",
   "initial_action_saved_in_metadata",
   "intake_type_saved_in_metadata",
 ] as const;
@@ -91,7 +91,10 @@ export function buildMatterIntakeMetadata(input: {
   context: CurrentUser;
   payload: CreateMatterIntakePayload;
   clientId: string | null;
-  opponentId: string | null;
+  relatedParties: {
+    persistedIds: string[];
+    persistedCount: number;
+  };
   proceedingId: string | null;
   fallbackSteps: MatterIntakeFallbackStep[];
   workflowStatus: MatterIntakeWorkflowStatus;
@@ -122,10 +125,10 @@ export function buildMatterIntakeMetadata(input: {
         persisted: Boolean(input.clientId),
         payload: input.payload.client,
       },
-      opposingParty: {
-        id: input.opponentId,
-        persisted: Boolean(input.opponentId),
-        payload: input.payload.opposingParty,
+      relatedParties: {
+        ids: input.relatedParties.persistedIds,
+        persistedCount: input.relatedParties.persistedCount,
+        payload: input.payload.relatedParties,
       },
       initialAction: {
         type: input.payload.initialAction,
@@ -201,14 +204,14 @@ export function readWorkflowStatusFromMatter(metadata: unknown, matterStatus: st
 export function listRepresentationReadinessMessages(issues: RepresentationReadinessIssue[]) {
   return issues.map((issue) => {
     if (issue === "conflict_check_not_clear") {
-      return "نتيجة فحص تعارض المصالح يجب أن تكون: سليم.";
+      return "Conflict check status must be clear for activation.";
     }
 
     if (issue === "engagement_not_signed") {
-      return "حالة اتفاقية الأتعاب يجب أن تكون: موقّعة.";
+      return "Engagement agreement must be signed for activation.";
     }
 
-    return "حالة سند الوكالة يجب أن تكون: ساري/صحيح.";
+    return "Power of attorney must be valid for activation.";
   });
 }
 

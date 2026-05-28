@@ -11,6 +11,7 @@ To avoid `ERROR 55P04 unsafe use of new value ...`, execution is intentionally s
 
 1. `01_enterprise_access_control_enum_and_schema.sql`
 2. `02_enterprise_access_control_seed.sql`
+3. `03_intake_parties_repair.sql` (run when intake fails on missing `public.opponents` or missing party columns)
 
 Run each file separately and wait for success before starting the next file.
 
@@ -18,4 +19,3 @@ Run each file separately and wait for success before starting the next file.
 
 - Deprecated: old ad-hoc guidance to manually run mixed enum+seed SQL in one SQL Editor execution.
 - Deprecated: past ambiguous instructions that referenced raw migration files without clear split execution.
-

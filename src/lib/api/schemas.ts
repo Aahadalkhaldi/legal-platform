@@ -141,6 +141,34 @@ export const intakeAgreementStatusSchema = z.enum(["signed", "pending"]);
 export const intakePoaStatusSchema = z.enum(["valid", "pending"]);
 export const intakeInitialActionSchema = z.enum(["lawsuit", "complaint"]);
 export const intakeSaveModeSchema = z.enum(["draft", "activate"]);
+export const intakePartyTypeSchema = z.enum([
+  "natural_person",
+  "company",
+  "establishment",
+  "government_entity",
+  "ministry",
+  "public_authority",
+  "public_prosecution",
+  "police",
+  "prosecution_authority",
+  "bank",
+  "insurance_company",
+  "association",
+  "heirs",
+  "other",
+]);
+export const intakePartyLegalCapacitySchema = z.enum([
+  "claimant",
+  "defendant",
+  "complainant",
+  "accused",
+  "respondent",
+  "beneficiary",
+  "guarantor",
+  "witness",
+  "related_party",
+  "prosecution_authority",
+]);
 export const intakeComplaintActionTypeSchema = z.enum([
   "police_report",
   "public_prosecution_complaint",
@@ -164,20 +192,48 @@ export const createLegalMatterSchema = z.object({
 export const createMatterIntakeSchema = z.object({
   saveMode: intakeSaveModeSchema.default("activate"),
   client: z.object({
-    fullName: z.string().trim().min(2).max(240),
-    displayName: z.string().trim().max(240).optional(),
-    email: z.string().trim().email().max(180).optional(),
-    phone: z.string().trim().max(40).optional(),
-    nationalId: z.string().trim().max(80).optional(),
-    address: z.string().trim().max(500).optional(),
+    partyType: intakePartyTypeSchema,
+    naturalPerson: z.object({
+      fullName: z.string().trim().min(2).max(240),
+      qidOrPassport: z.string().trim().max(80).optional(),
+      nationality: z.string().trim().max(100).optional(),
+      phone: z.string().trim().max(40).optional(),
+      email: z.string().trim().email().max(180).optional(),
+      address: z.string().trim().max(500).optional(),
+    }).optional(),
+    organization: z.object({
+      tradeName: z.string().trim().min(2).max(240),
+      commercialRegistrationNumber: z.string().trim().max(120).optional(),
+      authorizedSignatory: z.string().trim().max(240).optional(),
+      signatoryCapacity: z.string().trim().max(240).optional(),
+      phone: z.string().trim().max(40).optional(),
+      email: z.string().trim().email().max(180).optional(),
+      address: z.string().trim().max(500).optional(),
+    }).optional(),
+    governmentEntity: z.object({
+      entityName: z.string().trim().min(2).max(240),
+      department: z.string().trim().max(240).optional(),
+      contactPerson: z.string().trim().max(240).optional(),
+      officialEmail: z.string().trim().email().max(180).optional(),
+      officialPhone: z.string().trim().max(40).optional(),
+      address: z.string().trim().max(500).optional(),
+    }).optional(),
+    genericName: z.string().trim().max(240).optional(),
   }),
-  opposingParty: z.object({
-    fullName: z.string().trim().min(2).max(240),
-    identityNumber: z.string().trim().max(80).optional(),
-    email: z.string().trim().email().max(180).optional(),
-    phone: z.string().trim().max(40).optional(),
-    notes: z.string().trim().max(1000).optional(),
-  }),
+  relatedParties: z.array(
+    z.object({
+      partyName: z.string().trim().min(2).max(240),
+      partyType: intakePartyTypeSchema,
+      legalCapacity: intakePartyLegalCapacitySchema,
+      identificationNumber: z.string().trim().max(120).optional(),
+      registrationNumber: z.string().trim().max(120).optional(),
+      contactPerson: z.string().trim().max(240).optional(),
+      phone: z.string().trim().max(40).optional(),
+      email: z.string().trim().email().max(180).optional(),
+      address: z.string().trim().max(500).optional(),
+      notes: z.string().trim().max(1000).optional(),
+    }),
+  ).min(1),
   conflictCheckStatus: intakeConflictCheckStatusSchema,
   engagementAgreementStatus: intakeAgreementStatusSchema,
   poaStatus: intakePoaStatusSchema,
@@ -198,15 +254,54 @@ export const createMatterIntakeSchema = z.object({
   }).optional(),
   complaint: z.object({
     actionType: intakeComplaintActionTypeSchema.default("police_report"),
-    authority: z.string().trim().max(180).optional(),
+    complainant: z.string().trim().max(240).optional(),
+    accusedRespondent: z.string().trim().max(240).optional(),
+    publicProsecution: z.string().trim().max(240).optional(),
+    policeStation: z.string().trim().max(240).optional(),
+    cybercrimeDepartment: z.string().trim().max(240).optional(),
+    administrativeAuthority: z.string().trim().max(240).optional(),
+    laborAuthority: z.string().trim().max(240).optional(),
+    regulatoryAuthority: z.string().trim().max(240).optional(),
     reportNumber: z.string().trim().max(120).optional(),
     submissionDate: z.string().datetime().optional(),
-    complainant: z.string().trim().max(240).optional(),
-    respondent: z.string().trim().max(240).optional(),
-    prosecutorName: z.string().trim().max(180).optional(),
-    policeStation: z.string().trim().max(180).optional(),
+    notes: z.string().trim().max(1200).optional(),
   }).optional(),
 }).superRefine((value, context) => {
+  const organizationTypes = new Set(["company", "establishment", "bank", "insurance_company", "association"]);
+  const publicEntityTypes = new Set(["government_entity", "ministry", "public_authority", "public_prosecution", "police", "prosecution_authority"]);
+
+  if (value.client.partyType === "natural_person") {
+    if (!value.client.naturalPerson) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["client", "naturalPerson"],
+        message: "Natural person details are required for client party type natural_person.",
+      });
+    }
+  } else if (organizationTypes.has(value.client.partyType)) {
+    if (!value.client.organization) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["client", "organization"],
+        message: "Organization details are required for company/establishment/bank/insurance/association client types.",
+      });
+    }
+  } else if (publicEntityTypes.has(value.client.partyType)) {
+    if (!value.client.governmentEntity) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["client", "governmentEntity"],
+        message: "Government entity details are required for public/ministry/authority client types.",
+      });
+    }
+  } else if (!value.client.genericName && !value.client.organization?.tradeName && !value.client.naturalPerson?.fullName && !value.client.governmentEntity?.entityName) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["client", "genericName"],
+      message: "A client display name is required for heirs/other party types.",
+    });
+  }
+
   if (value.initialAction === "lawsuit" && !value.lawsuit) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
@@ -221,6 +316,32 @@ export const createMatterIntakeSchema = z.object({
       path: ["complaint"],
       message: "Complaint details are required when initialAction is complaint.",
     });
+  }
+
+  if (value.saveMode === "activate" && value.initialAction === "lawsuit" && !value.lawsuit?.caseNumber?.trim()) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["lawsuit", "caseNumber"],
+      message: "Lawsuit case number is required for activation mode.",
+    });
+  }
+
+  if (value.saveMode === "activate" && value.initialAction === "complaint") {
+    const authorityFields = [
+      value.complaint?.publicProsecution,
+      value.complaint?.policeStation,
+      value.complaint?.cybercrimeDepartment,
+      value.complaint?.administrativeAuthority,
+      value.complaint?.laborAuthority,
+      value.complaint?.regulatoryAuthority,
+    ];
+    if (!authorityFields.some((entry) => typeof entry === "string" && entry.trim().length > 0)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["complaint"],
+        message: "At least one complaint authority field is required for activation mode.",
+      });
+    }
   }
 });
 

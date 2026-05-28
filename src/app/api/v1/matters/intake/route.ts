@@ -23,6 +23,12 @@ type PersistedEntity = {
   persisted: boolean;
 };
 
+type PersistedRelatedParties = {
+  ids: string[];
+  persistedCount: number;
+  mode: "structured" | "legacy" | "metadata";
+};
+
 type CreatedMatterRow = {
   id: string;
   matter_number: string | null;
@@ -36,12 +42,6 @@ type CreatedMatterRow = {
 
 type CreatedProceedingRow = {
   id: string;
-  action_type: string;
-  stage: string;
-  status: string;
-  case_number: string | null;
-  authority: string | null;
-  report_number: string | null;
 };
 
 export async function POST(request: Request) {
@@ -77,20 +77,15 @@ export async function POST(request: Request) {
       payload: payload.client,
     });
 
-    const opponent = await insertOpponentOrFallback({
-      supabase,
-      accountId: context.accountId,
-      userId: context.userId,
-      fallbackSteps,
-      payload: payload.opposingParty,
-    });
-
     const desiredIntakeType = payload.initialAction === "lawsuit" ? "lawsuit" : "complaint_report";
-    const intakeMetadataDraft = buildMatterIntakeMetadata({
+    const metadataDraft = buildMatterIntakeMetadata({
       context,
       payload,
       clientId: client.id,
-      opponentId: opponent.id,
+      relatedParties: {
+        persistedIds: [],
+        persistedCount: 0,
+      },
       proceedingId: null,
       fallbackSteps,
       workflowStatus,
@@ -110,8 +105,17 @@ export async function POST(request: Request) {
         status: matterStatus,
         openedAt: payload.matter.openedAt,
         desiredIntakeType,
-        metadata: intakeMetadataDraft,
+        metadata: metadataDraft,
       },
+    });
+
+    const relatedParties = await insertRelatedPartiesOrFallback({
+      supabase,
+      accountId: context.accountId,
+      userId: context.userId,
+      matterId: matterInsertResult.row.id,
+      payload,
+      fallbackSteps,
     });
 
     const proceedingResult = workflowStatus === "active"
@@ -125,11 +129,14 @@ export async function POST(request: Request) {
         })
       : { id: null, persisted: false };
 
-    const intakeMetadataFinal = buildMatterIntakeMetadata({
+    const metadataFinal = buildMatterIntakeMetadata({
       context,
       payload,
       clientId: client.id,
-      opponentId: opponent.id,
+      relatedParties: {
+        persistedIds: relatedParties.ids,
+        persistedCount: relatedParties.persistedCount,
+      },
       proceedingId: proceedingResult.id,
       fallbackSteps,
       workflowStatus,
@@ -139,7 +146,7 @@ export async function POST(request: Request) {
     const { error: metadataError } = await supabase
       .from("legal_matters")
       .update({
-        metadata: intakeMetadataFinal,
+        metadata: metadataFinal,
         status: matterStatus,
         updated_by: context.userId,
       })
@@ -160,7 +167,7 @@ export async function POST(request: Request) {
       after: {
         matterId: matterInsertResult.row.id,
         clientId: client.id,
-        opponentId: opponent.id,
+        relatedPartyIds: relatedParties.ids,
         proceedingId: proceedingResult.id,
         workflowStatus,
         fallbackSteps,
@@ -184,9 +191,11 @@ export async function POST(request: Request) {
           id: client.id,
           persisted: client.persisted,
         },
-        opposingParty: {
-          id: opponent.id,
-          persisted: opponent.persisted,
+        relatedParties: {
+          ids: relatedParties.ids,
+          persistedCount: relatedParties.persistedCount,
+          persisted: relatedParties.persistedCount > 0,
+          persistenceMode: relatedParties.mode,
         },
         conflictCheckStatus: payload.conflictCheckStatus,
         engagementAgreementStatus: payload.engagementAgreementStatus,
@@ -214,26 +223,20 @@ async function insertClientOrFallback(input: {
   supabase: ReturnType<typeof createSupabaseAdmin>;
   accountId: string;
   userId: string;
-  payload: {
-    fullName: string;
-    displayName?: string;
-    email?: string;
-    phone?: string;
-    nationalId?: string;
-    address?: string;
-  };
+  payload: CreateMatterIntakePayload["client"];
   fallbackSteps: MatterIntakeFallbackStep[];
 }): Promise<PersistedEntity> {
+  const resolvedClient = resolveClientColumns(input.payload);
   const { data, error } = await input.supabase
     .from("clients")
     .insert({
       account_id: input.accountId,
-      full_name: input.payload.fullName,
-      display_name: input.payload.displayName ?? input.payload.fullName,
-      national_id: input.payload.nationalId ?? null,
-      email: input.payload.email ?? null,
-      phone: input.payload.phone ?? null,
-      address: input.payload.address ?? null,
+      full_name: resolvedClient.fullName,
+      display_name: resolvedClient.displayName,
+      national_id: resolvedClient.nationalId,
+      email: resolvedClient.email,
+      phone: resolvedClient.phone,
+      address: resolvedClient.address,
       status: "active",
       created_by: input.userId,
       updated_by: input.userId,
@@ -256,47 +259,83 @@ async function insertClientOrFallback(input: {
   };
 }
 
-async function insertOpponentOrFallback(input: {
+async function insertRelatedPartiesOrFallback(input: {
   supabase: ReturnType<typeof createSupabaseAdmin>;
   accountId: string;
   userId: string;
-  payload: {
-    fullName: string;
-    identityNumber?: string;
-    email?: string;
-    phone?: string;
-    notes?: string;
-  };
+  matterId: string;
+  payload: CreateMatterIntakePayload;
   fallbackSteps: MatterIntakeFallbackStep[];
-}): Promise<PersistedEntity> {
-  const { data, error } = await input.supabase
+}): Promise<PersistedRelatedParties> {
+  const structuredRows = input.payload.relatedParties.map((party) => ({
+    account_id: input.accountId,
+    legal_matter_id: input.matterId,
+    party_name: party.partyName,
+    full_name: party.partyName,
+    party_type: party.partyType,
+    legal_capacity: party.legalCapacity,
+    identity_number: party.identificationNumber ?? null,
+    registration_number: party.registrationNumber ?? null,
+    contact_person: party.contactPerson ?? null,
+    phone: party.phone ?? null,
+    email: party.email ?? null,
+    address: party.address ?? null,
+    notes: party.notes ?? null,
+    created_by: input.userId,
+    updated_by: input.userId,
+  }));
+
+  const structuredResult = await input.supabase
     .from("opponents")
-    .insert({
-      account_id: input.accountId,
-      full_name: input.payload.fullName,
-      identity_number: input.payload.identityNumber ?? null,
-      email: input.payload.email ?? null,
-      phone: input.payload.phone ?? null,
-      notes: input.payload.notes ?? null,
-      created_by: input.userId,
-      updated_by: input.userId,
-    })
-    .select("id")
-    .single();
+    .insert(structuredRows)
+    .select("id");
 
-  if (error) {
-    if (isMissingRelationError(error, "opponents") || isUndefinedColumnError(error)) {
-      input.fallbackSteps.push("opponent_saved_in_metadata");
-      return { id: null, persisted: false };
-    }
-
-    throw error;
+  if (!structuredResult.error) {
+    return {
+      ids: (structuredResult.data ?? []).map((row) => row.id),
+      persistedCount: (structuredResult.data ?? []).length,
+      mode: "structured",
+    };
   }
 
-  return {
-    id: typeof data?.id === "string" ? data.id : null,
-    persisted: typeof data?.id === "string",
-  };
+  if (isMissingRelationError(structuredResult.error, "opponents")) {
+    input.fallbackSteps.push("related_parties_saved_in_metadata");
+    return { ids: [], persistedCount: 0, mode: "metadata" };
+  }
+
+  if (!isUndefinedColumnError(structuredResult.error)) {
+    throw structuredResult.error;
+  }
+
+  const legacyRows = input.payload.relatedParties.map((party) => ({
+    account_id: input.accountId,
+    full_name: party.partyName,
+    identity_number: party.identificationNumber ?? party.registrationNumber ?? null,
+    phone: party.phone ?? null,
+    email: party.email ?? null,
+    notes: party.notes ?? null,
+    created_by: input.userId,
+    updated_by: input.userId,
+  }));
+  const legacyResult = await input.supabase
+    .from("opponents")
+    .insert(legacyRows)
+    .select("id");
+
+  if (!legacyResult.error) {
+    return {
+      ids: (legacyResult.data ?? []).map((row) => row.id),
+      persistedCount: (legacyResult.data ?? []).length,
+      mode: "legacy",
+    };
+  }
+
+  if (isMissingRelationError(legacyResult.error, "opponents") || isUndefinedColumnError(legacyResult.error)) {
+    input.fallbackSteps.push("related_parties_saved_in_metadata");
+    return { ids: [], persistedCount: 0, mode: "metadata" };
+  }
+
+  throw legacyResult.error;
 }
 
 async function insertMatterWithFallback(input: {
@@ -341,8 +380,8 @@ async function insertMatterWithFallback(input: {
     created_by: input.userId,
     updated_by: input.userId,
   };
-  const attempts = [baseInsert, withoutIntakeType];
 
+  const attempts = [baseInsert, withoutIntakeType];
   for (let attemptIndex = 0; attemptIndex < attempts.length; attemptIndex += 1) {
     const { data, error } = await input.supabase
       .from("legal_matters")
@@ -379,6 +418,7 @@ async function insertInitialProceedingOrFallback(input: {
   const actionType = isLawsuit
     ? "lawsuit"
     : complaintDetails?.actionType ?? "police_report";
+  const complaintAuthority = pickComplaintAuthority(complaintDetails);
 
   const { data, error } = await input.supabase
     .from("matter_proceedings")
@@ -393,18 +433,29 @@ async function insertInitialProceedingOrFallback(input: {
       circuit: isLawsuit ? lawsuitDetails?.circuit ?? null : null,
       department: isLawsuit ? lawsuitDetails?.department ?? null : null,
       claim_type: isLawsuit ? lawsuitDetails?.claimType ?? null : null,
-      authority: isLawsuit ? null : complaintDetails?.authority ?? null,
+      authority: isLawsuit ? null : complaintAuthority,
       report_number: isLawsuit ? null : complaintDetails?.reportNumber ?? null,
       submission_date: isLawsuit ? null : complaintDetails?.submissionDate ?? null,
       complainant: isLawsuit ? null : complaintDetails?.complainant ?? null,
-      respondent: isLawsuit ? null : complaintDetails?.respondent ?? null,
-      prosecutor_name: isLawsuit ? null : complaintDetails?.prosecutorName ?? null,
+      respondent: isLawsuit ? null : complaintDetails?.accusedRespondent ?? null,
+      prosecutor_name: isLawsuit ? null : complaintDetails?.publicProsecution ?? null,
       police_station: isLawsuit ? null : complaintDetails?.policeStation ?? null,
-      metadata: { source: "matter_intake_mvp" },
+      metadata: {
+        source: "matter_intake_mvp",
+        complaintAuthorities: isLawsuit ? null : {
+          publicProsecution: complaintDetails?.publicProsecution ?? null,
+          policeStation: complaintDetails?.policeStation ?? null,
+          cybercrimeDepartment: complaintDetails?.cybercrimeDepartment ?? null,
+          administrativeAuthority: complaintDetails?.administrativeAuthority ?? null,
+          laborAuthority: complaintDetails?.laborAuthority ?? null,
+          regulatoryAuthority: complaintDetails?.regulatoryAuthority ?? null,
+          notes: complaintDetails?.notes ?? null,
+        },
+      },
       created_by: input.userId,
       updated_by: input.userId,
     })
-    .select("id, action_type, stage, status, case_number, authority, report_number")
+    .select("id")
     .single();
 
   if (error) {
@@ -425,4 +476,65 @@ async function insertInitialProceedingOrFallback(input: {
     id: row.id,
     persisted: true,
   };
+}
+
+function resolveClientColumns(payload: CreateMatterIntakePayload["client"]) {
+  if (payload.partyType === "natural_person" && payload.naturalPerson) {
+    return {
+      fullName: payload.naturalPerson.fullName,
+      displayName: payload.naturalPerson.fullName,
+      nationalId: payload.naturalPerson.qidOrPassport ?? null,
+      email: payload.naturalPerson.email ?? null,
+      phone: payload.naturalPerson.phone ?? null,
+      address: payload.naturalPerson.address ?? null,
+    };
+  }
+
+  if (payload.organization) {
+    return {
+      fullName: payload.organization.tradeName,
+      displayName: payload.organization.tradeName,
+      nationalId: payload.organization.commercialRegistrationNumber ?? null,
+      email: payload.organization.email ?? null,
+      phone: payload.organization.phone ?? null,
+      address: payload.organization.address ?? null,
+    };
+  }
+
+  if (payload.governmentEntity) {
+    return {
+      fullName: payload.governmentEntity.entityName,
+      displayName: payload.governmentEntity.entityName,
+      nationalId: null,
+      email: payload.governmentEntity.officialEmail ?? null,
+      phone: payload.governmentEntity.officialPhone ?? null,
+      address: payload.governmentEntity.address ?? null,
+    };
+  }
+
+  const fallbackName = payload.genericName ?? "Unknown Client";
+  return {
+    fullName: fallbackName,
+    displayName: fallbackName,
+    nationalId: null,
+    email: null,
+    phone: null,
+    address: null,
+  };
+}
+
+function pickComplaintAuthority(complaint: CreateMatterIntakePayload["complaint"]) {
+  if (!complaint) return null;
+
+  const ordered = [
+    complaint.publicProsecution,
+    complaint.policeStation,
+    complaint.cybercrimeDepartment,
+    complaint.administrativeAuthority,
+    complaint.laborAuthority,
+    complaint.regulatoryAuthority,
+  ];
+
+  const value = ordered.find((entry) => typeof entry === "string" && entry.trim().length > 0);
+  return value ?? null;
 }
