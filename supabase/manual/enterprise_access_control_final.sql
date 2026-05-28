@@ -1,0 +1,7 @@
+-- Deprecated as an executable one-shot script.
+-- PostgreSQL enum commit rules require split execution to avoid:
+--   ERROR 55P04 unsafe use of new value ... of enum type member_role
+--
+-- Use the following files in this exact order in Supabase SQL Editor:
+-- 1) supabase/manual/01_enterprise_access_control_enum_and_schema.sql
+-- 2) supabase/manual/02_enterprise_access_control_seed.sql
