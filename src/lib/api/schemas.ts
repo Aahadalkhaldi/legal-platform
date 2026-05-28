@@ -136,6 +136,18 @@ export const matterActionTypeSchema = z.enum([
   "administrative_complaint",
   "regulatory_complaint",
 ]);
+export const intakeConflictCheckStatusSchema = z.enum(["clear", "pending"]);
+export const intakeAgreementStatusSchema = z.enum(["signed", "pending"]);
+export const intakePoaStatusSchema = z.enum(["valid", "pending"]);
+export const intakeInitialActionSchema = z.enum(["lawsuit", "complaint"]);
+export const intakeComplaintActionTypeSchema = z.enum([
+  "police_report",
+  "public_prosecution_complaint",
+  "cybercrime_report",
+  "labor_complaint",
+  "administrative_complaint",
+  "regulatory_complaint",
+]);
 
 export const createLegalMatterSchema = z.object({
   title: z.string().trim().min(2).max(240),
@@ -146,6 +158,68 @@ export const createLegalMatterSchema = z.object({
   clientId: z.string().uuid().optional(),
   leadLawyerUserId: z.string().uuid().optional(),
   openedAt: z.string().datetime().optional(),
+});
+
+export const createMatterIntakeSchema = z.object({
+  client: z.object({
+    fullName: z.string().trim().min(2).max(240),
+    displayName: z.string().trim().max(240).optional(),
+    email: z.string().trim().email().max(180).optional(),
+    phone: z.string().trim().max(40).optional(),
+    nationalId: z.string().trim().max(80).optional(),
+    address: z.string().trim().max(500).optional(),
+  }),
+  opposingParty: z.object({
+    fullName: z.string().trim().min(2).max(240),
+    identityNumber: z.string().trim().max(80).optional(),
+    email: z.string().trim().email().max(180).optional(),
+    phone: z.string().trim().max(40).optional(),
+    notes: z.string().trim().max(1000).optional(),
+  }),
+  conflictCheckStatus: intakeConflictCheckStatusSchema,
+  engagementAgreementStatus: intakeAgreementStatusSchema,
+  poaStatus: intakePoaStatusSchema,
+  matter: z.object({
+    title: z.string().trim().min(2).max(240),
+    matterNumber: z.string().trim().max(80).optional(),
+    description: z.string().trim().max(5000).optional(),
+    status: matterStatusSchema.default("open"),
+    openedAt: z.string().datetime().optional(),
+  }),
+  initialAction: intakeInitialActionSchema,
+  lawsuit: z.object({
+    caseNumber: z.string().trim().min(1).max(80),
+    courtId: z.string().uuid().optional(),
+    circuit: z.string().trim().max(120).optional(),
+    department: z.string().trim().max(120).optional(),
+    claimType: z.string().trim().max(180).optional(),
+  }).optional(),
+  complaint: z.object({
+    actionType: intakeComplaintActionTypeSchema.default("police_report"),
+    authority: z.string().trim().min(2).max(180),
+    reportNumber: z.string().trim().max(120).optional(),
+    submissionDate: z.string().datetime().optional(),
+    complainant: z.string().trim().max(240).optional(),
+    respondent: z.string().trim().max(240).optional(),
+    prosecutorName: z.string().trim().max(180).optional(),
+    policeStation: z.string().trim().max(180).optional(),
+  }).optional(),
+}).superRefine((value, context) => {
+  if (value.initialAction === "lawsuit" && !value.lawsuit) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["lawsuit"],
+      message: "Lawsuit details are required when initialAction is lawsuit.",
+    });
+  }
+
+  if (value.initialAction === "complaint" && !value.complaint) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["complaint"],
+      message: "Complaint details are required when initialAction is complaint.",
+    });
+  }
 });
 
 export const createMatterProceedingSchema = z.object({
@@ -198,3 +272,5 @@ export const convertMatterProceedingSchema = z.object({
   stage: proceedingStageSchema.optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
+
+export type CreateMatterIntakePayload = z.infer<typeof createMatterIntakeSchema>;

@@ -52,6 +52,8 @@ Permission inheritance is computed from:
 ## Legal Matters
 
 - `legal_matters` and `matter_proceedings` are tenant-scoped by `account_id` with RLS enabled.
+- MVP intake endpoint `POST /api/v1/matters/intake` uses service-side writes with explicit `account_id` filters and audit logging.
+- For schema-drifted environments where optional intake tables are missing (such as `clients`, `opponents`, or `matter_proceedings`), intake data is captured in `legal_matters.metadata.intakeMvp` instead of failing into manual schema changes.
 - Proceeding lifecycle actions (`convert-to-appeal`, `convert-to-cassation`, `open-execution`, `convert-to-lawsuit`, `convert-to-prosecution-case`) require `cases:update`.
 - Complaint/report actions and court actions remain under the same `legal_matter_id`; conversions create new rows and keep prior rows immutable for legal traceability.
 - Duplicate child conversions are constrained by `(account_id, parent_proceeding_id, action_type)` for active rows.

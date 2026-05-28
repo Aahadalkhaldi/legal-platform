@@ -1,0 +1,141 @@
+import { ZodError } from "zod";
+import { ApiError } from "@/lib/api/errors";
+import type { CreateMatterIntakePayload } from "@/lib/api/schemas";
+import type { CurrentUser } from "@/lib/types";
+
+export const MATTER_INTAKE_FALLBACK_STEPS = [
+  "client_saved_in_metadata",
+  "opponent_saved_in_metadata",
+  "initial_action_saved_in_metadata",
+  "intake_type_saved_in_metadata",
+] as const;
+
+export type MatterIntakeFallbackStep = (typeof MATTER_INTAKE_FALLBACK_STEPS)[number];
+
+type PgErrorLike = {
+  code?: unknown;
+  message?: unknown;
+  details?: unknown;
+  hint?: unknown;
+};
+
+export function isMissingRelationError(error: unknown, relation: string) {
+  const typed = asPgError(error);
+  if (typed.code !== "42P01") {
+    return false;
+  }
+
+  const relationPattern = relation.toLowerCase();
+  return typed.message.toLowerCase().includes(relationPattern)
+    || typed.details.toLowerCase().includes(relationPattern);
+}
+
+export function isUndefinedColumnError(error: unknown, column?: string) {
+  const typed = asPgError(error);
+  if (typed.code !== "42703") {
+    return false;
+  }
+
+  if (!column) {
+    return true;
+  }
+
+  const columnPattern = column.toLowerCase();
+  return typed.message.toLowerCase().includes(columnPattern)
+    || typed.details.toLowerCase().includes(columnPattern);
+}
+
+export function normalizeMatterIntakeError(error: unknown): ApiError {
+  if (error instanceof ApiError) {
+    return error;
+  }
+
+  if (error instanceof ZodError) {
+    const firstIssue = error.issues[0];
+    const path = firstIssue?.path?.length ? `${firstIssue.path.join(".")}: ` : "";
+    return new ApiError("VALIDATION_ERROR", `${path}${firstIssue?.message ?? "Invalid request payload."}`, {
+      issues: error.issues,
+    });
+  }
+
+  const typed = asPgError(error);
+  if (typed.message) {
+    return new ApiError("BAD_REQUEST", typed.message, {
+      postgresCode: typed.code || null,
+      details: typed.details || null,
+      hint: typed.hint || null,
+    });
+  }
+
+  if (error instanceof Error && error.message) {
+    return new ApiError("BAD_REQUEST", error.message);
+  }
+
+  return new ApiError("BAD_REQUEST", "Matter intake request could not be processed.");
+}
+
+export function buildMatterIntakeMetadata(input: {
+  context: CurrentUser;
+  payload: CreateMatterIntakePayload;
+  clientId: string | null;
+  opponentId: string | null;
+  proceedingId: string | null;
+  fallbackSteps: MatterIntakeFallbackStep[];
+}) {
+  const initialActionDetails = input.payload.initialAction === "lawsuit"
+    ? input.payload.lawsuit ?? null
+    : input.payload.complaint ?? null;
+
+  return {
+    intakeMvp: {
+      version: 1,
+      capturedAt: new Date().toISOString(),
+      actorUserId: input.context.userId,
+      conflictCheck: {
+        status: input.payload.conflictCheckStatus,
+      },
+      engagementAgreement: {
+        status: input.payload.engagementAgreementStatus,
+      },
+      poa: {
+        status: input.payload.poaStatus,
+      },
+      client: {
+        id: input.clientId,
+        persisted: Boolean(input.clientId),
+        payload: input.payload.client,
+      },
+      opposingParty: {
+        id: input.opponentId,
+        persisted: Boolean(input.opponentId),
+        payload: input.payload.opposingParty,
+      },
+      initialAction: {
+        type: input.payload.initialAction,
+        proceedingId: input.proceedingId,
+        persisted: Boolean(input.proceedingId),
+        payload: initialActionDetails,
+      },
+      fallbackSteps: input.fallbackSteps,
+    },
+  };
+}
+
+function asPgError(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return {
+      code: "",
+      message: "",
+      details: "",
+      hint: "",
+    };
+  }
+
+  const typed = error as PgErrorLike;
+  return {
+    code: typeof typed.code === "string" ? typed.code : "",
+    message: typeof typed.message === "string" ? typed.message : "",
+    details: typeof typed.details === "string" ? typed.details : "",
+    hint: typeof typed.hint === "string" ? typed.hint : "",
+  };
+}

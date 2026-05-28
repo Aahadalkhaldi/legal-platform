@@ -294,6 +294,10 @@ export default function MattersPage() {
               <RefreshCw size={18} />
               Refresh
             </button>
+            <Link className="button button-secondary" href="/matters/intake">
+              <CirclePlus size={18} />
+              MVP Intake Flow
+            </Link>
             <Link className="button button-secondary" href="/docs/API_CONTRACTS.md">
               <Scale size={18} />
               API Contracts

@@ -188,6 +188,105 @@ Required permission: `cases:create`.
 - `consultation`
 - `contract_document`
 
+`POST /api/v1/matters/intake`
+
+Single-step MVP intake endpoint that creates intake entities in one request:
+
+1. client
+2. opposing party
+3. conflict check status
+4. engagement agreement status
+5. POA status
+6. legal matter
+7. initial action (lawsuit or complaint/report)
+
+Required permission: `cases:create` + `manage_clients` action.
+
+```json
+{
+  "client": {
+    "fullName": "Client Name",
+    "displayName": "Optional",
+    "email": "client@example.com",
+    "phone": "+97450000000",
+    "nationalId": "QID123",
+    "address": "Doha"
+  },
+  "opposingParty": {
+    "fullName": "Opponent Name",
+    "identityNumber": "ID-99",
+    "email": "opponent@example.com",
+    "phone": "+97451111111",
+    "notes": "Optional notes"
+  },
+  "conflictCheckStatus": "clear",
+  "engagementAgreementStatus": "signed",
+  "poaStatus": "valid",
+  "matter": {
+    "title": "Commercial Dispute",
+    "matterNumber": "MAT-2026-010",
+    "description": "Optional",
+    "status": "open"
+  },
+  "initialAction": "lawsuit",
+  "lawsuit": {
+    "caseNumber": "2026/88",
+    "courtId": "uuid",
+    "circuit": "Commercial",
+    "department": "First Instance",
+    "claimType": "contract_dispute"
+  }
+}
+```
+
+Complaint/report intake payload uses:
+
+```json
+{
+  "initialAction": "complaint",
+  "complaint": {
+    "actionType": "police_report",
+    "authority": "Doha Police",
+    "reportNumber": "PR-2026-10",
+    "submissionDate": "2026-05-28T09:00:00.000Z",
+    "complainant": "Company A",
+    "respondent": "Company B",
+    "prosecutorName": "Optional",
+    "policeStation": "Optional"
+  }
+}
+```
+
+Response returns the created matter plus persisted/fallback status for client, opponent, and proceeding:
+
+```json
+{
+  "data": {
+    "matter": {
+      "id": "uuid",
+      "matterNumber": "MAT-2026-010",
+      "title": "Commercial Dispute",
+      "status": "open",
+      "intakeType": "lawsuit"
+    },
+    "client": { "id": "uuid", "persisted": true },
+    "opposingParty": { "id": null, "persisted": false },
+    "initialAction": {
+      "type": "lawsuit",
+      "proceedingId": "uuid",
+      "proceedingPersisted": true
+    },
+    "fallbackSteps": ["opponent_saved_in_metadata"]
+  },
+  "requestId": "req_..."
+}
+```
+
+Fallback behavior:
+
+- If an intake table is missing in the environment (for example `clients`, `opponents`, or `matter_proceedings`), intake continues and that step is stored in `legal_matters.metadata.intakeMvp`.
+- The endpoint still returns `201` with `fallbackSteps` so clients can detect which data is temporarily metadata-backed.
+
 `GET /api/v1/matters/{matterId}`
 
 Returns the legal matter plus a proceedings timeline.  
