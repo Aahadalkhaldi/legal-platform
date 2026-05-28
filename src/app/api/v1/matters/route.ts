@@ -4,6 +4,7 @@ import { ApiError, fail, ok, requestId } from "@/lib/api/errors";
 import { hasMatterAction, isMatterScopedRole, normalizePlatformRole } from "@/lib/access-control";
 import { parseSearchParams } from "@/lib/api/pagination";
 import { createLegalMatterSchema } from "@/lib/api/schemas";
+import { readWorkflowStatusFromMatter } from "@/lib/api/matter-intake";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 
 export async function GET(request: Request) {
@@ -16,7 +17,7 @@ export async function GET(request: Request) {
 
     let query = supabase
       .from("legal_matters")
-      .select("id, matter_number, title, status, intake_type, opened_at, closed_at, updated_at, client:clients(id, full_name)")
+      .select("id, matter_number, title, status, intake_type, opened_at, closed_at, updated_at, metadata, client:clients(id, full_name)")
       .eq("account_id", context.accountId)
       .is("deleted_at", null)
       .order("updated_at", { ascending: false })
@@ -70,6 +71,7 @@ export async function GET(request: Request) {
         title: row.title,
         status: row.status,
         intakeType: row.intake_type,
+        intakeWorkflowStatus: readWorkflowStatusFromMatter(row.metadata, row.status),
         openedAt: row.opened_at,
         closedAt: row.closed_at,
         updatedAt: row.updated_at,

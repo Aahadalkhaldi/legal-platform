@@ -14,6 +14,7 @@ type MatterSummary = {
   title: string;
   status: string;
   intakeType: IntakeType | null;
+  intakeWorkflowStatus: "draft" | "active" | "pending_documents";
   openedAt: string | null;
   closedAt: string | null;
   updatedAt: string;
@@ -565,7 +566,7 @@ export default function MattersPage() {
                       </td>
                       <td style={{ padding: "12px 8px" }}>{row.intakeType ?? "N/A"}</td>
                       <td style={{ padding: "12px 8px" }}>{row.clientName ?? "N/A"}</td>
-                      <td style={{ padding: "12px 8px" }}>{row.status}</td>
+                      <td style={{ padding: "12px 8px" }}>{matterStatusLabel(row.intakeWorkflowStatus)}</td>
                       <td style={{ padding: "12px 8px" }}>{row.proceedingCount}</td>
                       <td style={{ padding: "12px 8px" }}>{new Date(row.updatedAt).toLocaleString()}</td>
                       <td style={{ padding: "12px 8px" }}>
@@ -616,4 +617,10 @@ function toIsoOrUndefined(value: string) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return undefined;
   return parsed.toISOString();
+}
+
+function matterStatusLabel(status: "draft" | "active" | "pending_documents") {
+  if (status === "draft") return "draft";
+  if (status === "pending_documents") return "pending documents";
+  return "active";
 }

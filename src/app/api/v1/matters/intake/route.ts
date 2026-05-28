@@ -2,9 +2,14 @@ import { getAuthContext, requirePermission } from "@/lib/api/context";
 import { resolveStageForActionType } from "@/lib/api/matter-proceedings";
 import {
   buildMatterIntakeMetadata,
+  evaluateRepresentationReadiness,
   isMissingRelationError,
   isUndefinedColumnError,
+  listRepresentationReadinessMessages,
+  mapWorkflowStatusToMatterStatus,
   normalizeMatterIntakeError,
+  resolveMatterIntakeWorkflowStatus,
+  type MatterIntakeSaveMode,
   type MatterIntakeFallbackStep,
 } from "@/lib/api/matter-intake";
 import { createMatterIntakeSchema, type CreateMatterIntakePayload } from "@/lib/api/schemas";
@@ -57,6 +62,12 @@ export async function POST(request: Request) {
     const payload = createMatterIntakeSchema.parse(await request.json());
     const supabase = createSupabaseAdmin();
     const fallbackSteps: MatterIntakeFallbackStep[] = [];
+    const representationReadiness = evaluateRepresentationReadiness(payload);
+    const workflowStatus = resolveMatterIntakeWorkflowStatus({
+      saveMode: payload.saveMode as MatterIntakeSaveMode,
+      representationReadiness,
+    });
+    const matterStatus = mapWorkflowStatusToMatterStatus(workflowStatus);
 
     const client = await insertClientOrFallback({
       supabase,
@@ -82,6 +93,8 @@ export async function POST(request: Request) {
       opponentId: opponent.id,
       proceedingId: null,
       fallbackSteps,
+      workflowStatus,
+      representationReadiness,
     });
 
     const matterInsertResult = await insertMatterWithFallback({
@@ -94,21 +107,23 @@ export async function POST(request: Request) {
         title: payload.matter.title,
         matterNumber: payload.matter.matterNumber,
         description: payload.matter.description,
-        status: payload.matter.status,
+        status: matterStatus,
         openedAt: payload.matter.openedAt,
         desiredIntakeType,
         metadata: intakeMetadataDraft,
       },
     });
 
-    const proceedingResult = await insertInitialProceedingOrFallback({
-      supabase,
-      accountId: context.accountId,
-      userId: context.userId,
-      fallbackSteps,
-      matterId: matterInsertResult.row.id,
-      payload,
-    });
+    const proceedingResult = workflowStatus === "active"
+      ? await insertInitialProceedingOrFallback({
+          supabase,
+          accountId: context.accountId,
+          userId: context.userId,
+          fallbackSteps,
+          matterId: matterInsertResult.row.id,
+          payload,
+        })
+      : { id: null, persisted: false };
 
     const intakeMetadataFinal = buildMatterIntakeMetadata({
       context,
@@ -117,12 +132,15 @@ export async function POST(request: Request) {
       opponentId: opponent.id,
       proceedingId: proceedingResult.id,
       fallbackSteps,
+      workflowStatus,
+      representationReadiness,
     });
 
     const { error: metadataError } = await supabase
       .from("legal_matters")
       .update({
         metadata: intakeMetadataFinal,
+        status: matterStatus,
         updated_by: context.userId,
       })
       .eq("id", matterInsertResult.row.id)
@@ -144,6 +162,7 @@ export async function POST(request: Request) {
         clientId: client.id,
         opponentId: opponent.id,
         proceedingId: proceedingResult.id,
+        workflowStatus,
         fallbackSteps,
       },
     });
@@ -154,8 +173,9 @@ export async function POST(request: Request) {
           id: matterInsertResult.row.id,
           matterNumber: matterInsertResult.row.matter_number,
           title: matterInsertResult.row.title,
-          status: matterInsertResult.row.status,
+          status: matterStatus,
           intakeType: matterInsertResult.row.intake_type ?? desiredIntakeType,
+          intakeWorkflowStatus: workflowStatus,
           clientId: matterInsertResult.row.client_id ?? client.id,
           openedAt: matterInsertResult.row.opened_at,
           updatedAt: matterInsertResult.row.updated_at,
@@ -175,6 +195,11 @@ export async function POST(request: Request) {
           type: payload.initialAction,
           proceedingId: proceedingResult.id,
           proceedingPersisted: proceedingResult.persisted,
+        },
+        representationReadiness: {
+          readyForActivation: representationReadiness.readyForActivation,
+          issues: representationReadiness.issues,
+          messages: listRepresentationReadinessMessages(representationReadiness.issues),
         },
         fallbackSteps,
       },

@@ -1,16 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, type CSSProperties, useMemo, useState } from "react";
+import { type CSSProperties, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, LoaderCircle, Save, ShieldAlert } from "lucide-react";
 import { requestApiWithSession, SessionRequiredError } from "@/lib/api/browser-client";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
+type SaveMode = "draft" | "activate";
 type InitialAction = "lawsuit" | "complaint";
 type ConflictCheckStatus = "clear" | "pending";
 type EngagementAgreementStatus = "signed" | "pending";
 type PoaStatus = "valid" | "pending";
+type IntakeWorkflowStatus = "draft" | "active" | "pending_documents";
 type ComplaintActionType =
   | "police_report"
   | "public_prosecution_complaint"
@@ -27,6 +29,7 @@ type IntakeResponse = {
       title: string;
       status: string;
       intakeType: string;
+      intakeWorkflowStatus: IntakeWorkflowStatus;
       clientId: string | null;
       openedAt: string;
       updatedAt: string;
@@ -46,6 +49,11 @@ type IntakeResponse = {
       type: InitialAction;
       proceedingId: string | null;
       proceedingPersisted: boolean;
+    };
+    representationReadiness: {
+      readyForActivation: boolean;
+      issues: string[];
+      messages: string[];
     };
     fallbackSteps: string[];
   };
@@ -125,25 +133,71 @@ export default function MatterIntakePage() {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const [form, setForm] = useState<IntakeFormState>(INITIAL_FORM_STATE);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [lastMode, setLastMode] = useState<SaveMode>("draft");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [successPayload, setSuccessPayload] = useState<IntakeResponse["data"] | null>(null);
-  const configurationError = !supabase ? "إعداد Supabase العام مفقود." : null;
+  const [validationMessages, setValidationMessages] = useState<string[]>([]);
+  const configurationError = !supabase ? "تعذر تحميل إعدادات الاتصال بالخدمة." : null;
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  const hasAnyInput = useMemo(() => {
+    const trackedFields = [
+      form.clientFullName,
+      form.clientDisplayName,
+      form.clientEmail,
+      form.clientPhone,
+      form.clientNationalId,
+      form.clientAddress,
+      form.opposingFullName,
+      form.opposingIdentityNumber,
+      form.opposingEmail,
+      form.opposingPhone,
+      form.opposingNotes,
+      form.matterTitle,
+      form.matterNumber,
+      form.matterDescription,
+      form.lawsuitCaseNumber,
+      form.lawsuitCourtId,
+      form.lawsuitCircuit,
+      form.lawsuitDepartment,
+      form.lawsuitClaimType,
+      form.complaintAuthority,
+      form.complaintReportNumber,
+      form.complaintSubmissionDate,
+      form.complaintComplainant,
+      form.complaintRespondent,
+      form.complaintProsecutorName,
+      form.complaintPoliceStation,
+    ];
+    return trackedFields.some((value) => String(value).trim().length > 0);
+  }, [form]);
+
+  const projectedActiveState: IntakeWorkflowStatus = useMemo(() => {
+    if (!isRepresentationReady(form)) {
+      return "pending_documents";
+    }
+
+    return "active";
+  }, [form]);
+
+  async function submit(mode: SaveMode) {
+    setLastMode(mode);
     setErrorMessage(null);
-    setSuccessPayload(null);
-    setIsSubmitting(true);
+    const formValidationMessages = validateForm(form, mode);
+    setValidationMessages(formValidationMessages);
 
-    if (!supabase) {
-      setIsSubmitting(false);
+    if (formValidationMessages.length > 0) {
       return;
     }
 
+    if (!supabase) {
+      return;
+    }
+
+    setIsSubmitting(true);
     try {
       const payload = await requestApiWithSession<IntakeResponse>(supabase, "/api/v1/matters/intake", {
         method: "POST",
         body: JSON.stringify({
+          saveMode: mode,
           client: {
             fullName: form.clientFullName.trim(),
             displayName: form.clientDisplayName.trim() || undefined,
@@ -171,7 +225,7 @@ export default function MatterIntakePage() {
           initialAction: form.initialAction,
           lawsuit: form.initialAction === "lawsuit"
             ? {
-                caseNumber: form.lawsuitCaseNumber.trim(),
+                caseNumber: form.lawsuitCaseNumber.trim() || undefined,
                 courtId: form.lawsuitCourtId.trim() || undefined,
                 circuit: form.lawsuitCircuit.trim() || undefined,
                 department: form.lawsuitDepartment.trim() || undefined,
@@ -181,7 +235,7 @@ export default function MatterIntakePage() {
           complaint: form.initialAction === "complaint"
             ? {
                 actionType: form.complaintActionType,
-                authority: form.complaintAuthority.trim(),
+                authority: form.complaintAuthority.trim() || undefined,
                 reportNumber: form.complaintReportNumber.trim() || undefined,
                 submissionDate: toIsoOrUndefined(form.complaintSubmissionDate),
                 complainant: form.complaintComplainant.trim() || undefined,
@@ -193,15 +247,15 @@ export default function MatterIntakePage() {
         }),
       });
 
-      setSuccessPayload(payload.data);
-      setForm(INITIAL_FORM_STATE);
+      const nextStatus = payload.data.matter.intakeWorkflowStatus;
+      router.replace(`/matters/${payload.data.matter.id}?intakeStatus=${encodeURIComponent(nextStatus)}`);
     } catch (error) {
       if (error instanceof SessionRequiredError) {
         router.replace(`/login?next=${encodeURIComponent("/matters/intake")}`);
         return;
       }
 
-      setErrorMessage(error instanceof Error ? error.message : "حدث خطأ أثناء الإرسال.");
+      setErrorMessage(error instanceof Error ? error.message : "تعذر حفظ بيانات القيد.");
     } finally {
       setIsSubmitting(false);
     }
@@ -213,23 +267,47 @@ export default function MatterIntakePage() {
         <section className="panel" style={{ display: "grid", gap: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <div>
-              <p className="eyebrow" style={{ margin: 0 }}>MVP Intake</p>
-              <h1 style={{ margin: "8px 0 4px", fontSize: 30 }}>تدفق فتح ملف قانوني</h1>
+              <p className="eyebrow" style={{ margin: 0 }}>قيد ملف قانوني</p>
+              <h1 style={{ margin: "8px 0 4px", fontSize: 30 }}>نموذج فتح ملف قانوني</h1>
               <p className="muted" style={{ margin: 0 }}>
-                نموذج واحد لإنشاء العميل، الخصم، فحص التعارض، الاتفاقية، الوكالة، الملف القانوني، والإجراء الأولي.
+                أدخل بيانات الموكل والخصم، ثم احفظ الملف كمسودة أو فعّله عند استكمال متطلبات التمثيل القانوني.
               </p>
             </div>
             <Link className="button button-secondary" href="/matters">
               <ArrowRight size={18} />
-              الرجوع إلى القضايا
+              الرجوع إلى الملفات
             </Link>
           </div>
 
-          <form onSubmit={handleSubmit} style={{ display: "grid", gap: 16 }}>
+          <div style={statusGuideStyle}>
+            <strong>حالات الملف:</strong>
+            <span>draft = مسودة</span>
+            <span>active = نشط</span>
+            <span>pending documents = بانتظار استكمال المستندات</span>
+          </div>
+
+          {!hasAnyInput ? (
+            <p className="muted" style={{ margin: 0 }}>
+              لم يتم إدخال أي بيانات بعد. ابدأ بإدخال البيانات الأساسية المشار إليها بعلامة *.
+            </p>
+          ) : null}
+
+          <div style={{ ...statusGuideStyle, background: "rgba(0, 51, 153, 0.06)" }}>
+            <strong>الحالة المتوقعة عند التفعيل:</strong>
+            <span>{projectedStatusLabel(projectedActiveState)}</span>
+          </div>
+
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submit("activate");
+            }}
+            style={{ display: "grid", gap: 16 }}
+          >
             <section style={sectionStyle}>
-              <h2 style={sectionTitleStyle}>1) بيانات العميل</h2>
+              <h2 style={sectionTitleStyle}>1) بيانات الموكل</h2>
               <label style={fieldStyle}>
-                <span>الاسم الكامل *</span>
+                <span>اسم الموكل الكامل *</span>
                 <input
                   required
                   value={form.clientFullName}
@@ -238,7 +316,7 @@ export default function MatterIntakePage() {
                 />
               </label>
               <label style={fieldStyle}>
-                <span>اسم العرض</span>
+                <span>الاسم المختصر</span>
                 <input
                   value={form.clientDisplayName}
                   onChange={(event) => setForm((current) => ({ ...current, clientDisplayName: event.target.value }))}
@@ -263,7 +341,7 @@ export default function MatterIntakePage() {
                 />
               </label>
               <label style={fieldStyle}>
-                <span>الرقم الشخصي</span>
+                <span>الرقم الشخصي / التجاري</span>
                 <input
                   value={form.clientNationalId}
                   onChange={(event) => setForm((current) => ({ ...current, clientNationalId: event.target.value }))}
@@ -318,7 +396,7 @@ export default function MatterIntakePage() {
                 />
               </label>
               <label style={{ ...fieldStyle, gridColumn: "1 / -1" }}>
-                <span>ملاحظات</span>
+                <span>ملاحظات على الخصومة</span>
                 <textarea
                   rows={3}
                   value={form.opposingNotes}
@@ -329,9 +407,9 @@ export default function MatterIntakePage() {
             </section>
 
             <section style={sectionStyle}>
-              <h2 style={sectionTitleStyle}>3) الفحص والمستندات الأولية</h2>
+              <h2 style={sectionTitleStyle}>3) متطلبات التمثيل القانوني</h2>
               <label style={fieldStyle}>
-                <span>حالة فحص التعارض *</span>
+                <span>نتيجة فحص تعارض المصالح *</span>
                 <select
                   required
                   value={form.conflictCheckStatus}
@@ -341,12 +419,12 @@ export default function MatterIntakePage() {
                   }}
                   style={inputStyle}
                 >
-                  <option value="pending">معلق</option>
+                  <option value="pending">قيد الفحص</option>
                   <option value="clear">سليم</option>
                 </select>
               </label>
               <label style={fieldStyle}>
-                <span>حالة اتفاقية الأتعاب *</span>
+                <span>اتفاقية الأتعاب *</span>
                 <select
                   required
                   value={form.engagementAgreementStatus}
@@ -356,12 +434,12 @@ export default function MatterIntakePage() {
                   }}
                   style={inputStyle}
                 >
-                  <option value="pending">معلق</option>
-                  <option value="signed">موقعة</option>
+                  <option value="pending">غير موقّعة</option>
+                  <option value="signed">موقّعة</option>
                 </select>
               </label>
               <label style={fieldStyle}>
-                <span>حالة الوكالة *</span>
+                <span>سند الوكالة *</span>
                 <select
                   required
                   value={form.poaStatus}
@@ -371,8 +449,8 @@ export default function MatterIntakePage() {
                   }}
                   style={inputStyle}
                 >
-                  <option value="pending">معلق</option>
-                  <option value="valid">صحيحة</option>
+                  <option value="pending">غير مكتمل</option>
+                  <option value="valid">ساري/صحيح</option>
                 </select>
               </label>
             </section>
@@ -380,7 +458,7 @@ export default function MatterIntakePage() {
             <section style={sectionStyle}>
               <h2 style={sectionTitleStyle}>4) بيانات الملف القانوني</h2>
               <label style={fieldStyle}>
-                <span>عنوان الملف *</span>
+                <span>موضوع الملف *</span>
                 <input
                   required
                   value={form.matterTitle}
@@ -397,7 +475,7 @@ export default function MatterIntakePage() {
                 />
               </label>
               <label style={{ ...fieldStyle, gridColumn: "1 / -1" }}>
-                <span>وصف مختصر</span>
+                <span>ملخص الوقائع</span>
                 <textarea
                   rows={3}
                   value={form.matterDescription}
@@ -408,9 +486,9 @@ export default function MatterIntakePage() {
             </section>
 
             <section style={sectionStyle}>
-              <h2 style={sectionTitleStyle}>5) الإجراء الأولي</h2>
+              <h2 style={sectionTitleStyle}>5) الإجراء الافتتاحي</h2>
               <label style={fieldStyle}>
-                <span>نوع الإجراء الأولي *</span>
+                <span>نوع الإجراء *</span>
                 <select
                   required
                   value={form.initialAction}
@@ -421,16 +499,15 @@ export default function MatterIntakePage() {
                   style={inputStyle}
                 >
                   <option value="lawsuit">دعوى</option>
-                  <option value="complaint">شكوى / بلاغ</option>
+                  <option value="complaint">بلاغ / شكوى</option>
                 </select>
               </label>
 
               {form.initialAction === "lawsuit" ? (
                 <>
                   <label style={fieldStyle}>
-                    <span>رقم القضية *</span>
+                    <span>رقم الدعوى</span>
                     <input
-                      required
                       value={form.lawsuitCaseNumber}
                       onChange={(event) => setForm((current) => ({ ...current, lawsuitCaseNumber: event.target.value }))}
                       style={inputStyle}
@@ -453,7 +530,7 @@ export default function MatterIntakePage() {
                     />
                   </label>
                   <label style={fieldStyle}>
-                    <span>الإدارة / القسم</span>
+                    <span>القسم</span>
                     <input
                       value={form.lawsuitDepartment}
                       onChange={(event) => setForm((current) => ({ ...current, lawsuitDepartment: event.target.value }))}
@@ -472,7 +549,7 @@ export default function MatterIntakePage() {
               ) : (
                 <>
                   <label style={fieldStyle}>
-                    <span>نوع الشكوى / البلاغ *</span>
+                    <span>تصنيف الشكوى / البلاغ *</span>
                     <select
                       required
                       value={form.complaintActionType}
@@ -482,8 +559,8 @@ export default function MatterIntakePage() {
                       }}
                       style={inputStyle}
                     >
-                      <option value="police_report">بلاغ شرطة</option>
-                      <option value="public_prosecution_complaint">شكوى للنيابة العامة</option>
+                      <option value="police_report">بلاغ لدى الشرطة</option>
+                      <option value="public_prosecution_complaint">شكوى لدى النيابة العامة</option>
                       <option value="cybercrime_report">بلاغ جرائم إلكترونية</option>
                       <option value="labor_complaint">شكوى عمالية</option>
                       <option value="administrative_complaint">شكوى إدارية</option>
@@ -491,16 +568,15 @@ export default function MatterIntakePage() {
                     </select>
                   </label>
                   <label style={fieldStyle}>
-                    <span>الجهة المختصة *</span>
+                    <span>الجهة المختصة</span>
                     <input
-                      required
                       value={form.complaintAuthority}
                       onChange={(event) => setForm((current) => ({ ...current, complaintAuthority: event.target.value }))}
                       style={inputStyle}
                     />
                   </label>
                   <label style={fieldStyle}>
-                    <span>رقم البلاغ / الشكوى</span>
+                    <span>رقم الشكوى / البلاغ</span>
                     <input
                       value={form.complaintReportNumber}
                       onChange={(event) => setForm((current) => ({ ...current, complaintReportNumber: event.target.value }))}
@@ -517,7 +593,7 @@ export default function MatterIntakePage() {
                     />
                   </label>
                   <label style={fieldStyle}>
-                    <span>المشتكي</span>
+                    <span>اسم المشتكي</span>
                     <input
                       value={form.complaintComplainant}
                       onChange={(event) => setForm((current) => ({ ...current, complaintComplainant: event.target.value }))}
@@ -525,7 +601,7 @@ export default function MatterIntakePage() {
                     />
                   </label>
                   <label style={fieldStyle}>
-                    <span>المشتكى عليه / الخصم</span>
+                    <span>اسم المشكو في حقه</span>
                     <input
                       value={form.complaintRespondent}
                       onChange={(event) => setForm((current) => ({ ...current, complaintRespondent: event.target.value }))}
@@ -541,7 +617,7 @@ export default function MatterIntakePage() {
                     />
                   </label>
                   <label style={fieldStyle}>
-                    <span>المركز / الجهة الأمنية</span>
+                    <span>المركز الأمني / الجهة</span>
                     <input
                       value={form.complaintPoliceStation}
                       onChange={(event) => setForm((current) => ({ ...current, complaintPoliceStation: event.target.value }))}
@@ -552,6 +628,17 @@ export default function MatterIntakePage() {
               )}
             </section>
 
+            {validationMessages.length > 0 ? (
+              <div role="alert" style={validationBoxStyle}>
+                <strong>يرجى استكمال المتطلبات التالية:</strong>
+                <ul style={{ margin: "6px 0 0", paddingInlineStart: 18 }}>
+                  {validationMessages.map((message) => (
+                    <li key={message}>{message}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
             {configurationError || errorMessage ? (
               <p role="alert" style={{ color: "#b42318", margin: 0, display: "flex", gap: 8, alignItems: "center" }}>
                 <ShieldAlert size={16} />
@@ -559,48 +646,27 @@ export default function MatterIntakePage() {
               </p>
             ) : null}
 
-            <button
-              type="submit"
-              className="button button-primary"
-              disabled={isSubmitting || !!configurationError}
-              style={{ width: "fit-content" }}
-            >
-              {isSubmitting ? <LoaderCircle size={18} className="animate-spin" /> : <Save size={18} />}
-              {isSubmitting ? "جارٍ الإنشاء..." : "إنشاء ملف قانوني كامل"}
-            </button>
+            <div className="actions" style={{ marginTop: 0 }}>
+              <button
+                type="button"
+                className="button button-secondary"
+                disabled={isSubmitting || !!configurationError}
+                onClick={() => void submit("draft")}
+              >
+                {isSubmitting && lastMode === "draft" ? <LoaderCircle size={18} className="animate-spin" /> : <Save size={18} />}
+                {isSubmitting && lastMode === "draft" ? "جارٍ حفظ المسودة..." : "حفظ كمسودة"}
+              </button>
+              <button
+                type="submit"
+                className="button button-primary"
+                disabled={isSubmitting || !!configurationError}
+              >
+                {isSubmitting && lastMode === "activate" ? <LoaderCircle size={18} className="animate-spin" /> : <Save size={18} />}
+                {isSubmitting && lastMode === "activate" ? "جارٍ التفعيل..." : "حفظ وتفعيل الملف"}
+              </button>
+            </div>
           </form>
         </section>
-
-        {successPayload ? (
-          <section className="panel" style={{ marginTop: 16, display: "grid", gap: 10 }}>
-            <p className="eyebrow" style={{ margin: 0 }}>تم الحفظ بنجاح</p>
-            <h2 style={{ margin: 0, fontSize: 24 }}>{successPayload.matter.title}</h2>
-            <p style={{ margin: 0 }}>
-              رقم الملف: <strong>{successPayload.matter.matterNumber ?? "غير متوفر"}</strong>
-            </p>
-            <p style={{ margin: 0 }}>
-              معرف الملف: <strong>{successPayload.matter.id}</strong>
-            </p>
-            <p style={{ margin: 0 }}>
-              الإجراء الأولي: <strong>{successPayload.initialAction.type}</strong>
-              {" | "}
-              محفوظ كـ proceeding: <strong>{successPayload.initialAction.proceedingPersisted ? "نعم" : "لا (تم حفظه داخل metadata)"}</strong>
-            </p>
-            {successPayload.fallbackSteps.length > 0 ? (
-              <p style={{ margin: 0, color: "#7a4d00" }}>
-                تم استخدام fallback metadata للخطوات: {successPayload.fallbackSteps.join(", ")}
-              </p>
-            ) : null}
-            <div className="actions" style={{ marginTop: 4 }}>
-              <Link className="button button-primary" href={`/matters/${successPayload.matter.id}`}>
-                فتح تفاصيل الملف
-              </Link>
-              <Link className="button button-secondary" href="/matters">
-                العودة إلى قائمة الملفات
-              </Link>
-            </div>
-          </section>
-        ) : null}
       </div>
     </main>
   );
@@ -637,9 +703,81 @@ const inputStyle: CSSProperties = {
   background: "white",
 };
 
+const statusGuideStyle: CSSProperties = {
+  border: "1px dashed var(--line)",
+  borderRadius: 8,
+  padding: "10px 12px",
+  display: "flex",
+  gap: 12,
+  flexWrap: "wrap",
+  background: "rgba(255, 255, 255, 0.7)",
+};
+
+const validationBoxStyle: CSSProperties = {
+  border: "1px solid #f9b5b5",
+  background: "#fff7f7",
+  borderRadius: 8,
+  padding: "10px 12px",
+  color: "#912018",
+};
+
 function toIsoOrUndefined(value: string) {
   if (!value) return undefined;
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return undefined;
   return parsed.toISOString();
+}
+
+function isRepresentationReady(form: IntakeFormState) {
+  return form.conflictCheckStatus === "clear"
+    && form.engagementAgreementStatus === "signed"
+    && form.poaStatus === "valid";
+}
+
+function validateForm(form: IntakeFormState, mode: SaveMode) {
+  const messages: string[] = [];
+
+  if (!form.clientFullName.trim()) {
+    messages.push("يجب إدخال اسم الموكل الكامل.");
+  }
+
+  if (!form.opposingFullName.trim()) {
+    messages.push("يجب إدخال اسم الخصم.");
+  }
+
+  if (!form.matterTitle.trim()) {
+    messages.push("يجب إدخال موضوع الملف القانوني.");
+  }
+
+  if (mode === "activate") {
+    if (form.initialAction === "lawsuit" && !form.lawsuitCaseNumber.trim()) {
+      messages.push("عند التفعيل كدعوى، يجب إدخال رقم الدعوى.");
+    }
+
+    if (form.initialAction === "complaint" && !form.complaintAuthority.trim()) {
+      messages.push("عند التفعيل كبلاغ/شكوى، يجب إدخال الجهة المختصة.");
+    }
+
+    if (!isRepresentationReady(form)) {
+      if (form.conflictCheckStatus !== "clear") {
+        messages.push("لا يمكن تفعيل الملف قبل اعتماد فحص تعارض المصالح (سليم).");
+      }
+
+      if (form.engagementAgreementStatus !== "signed") {
+        messages.push("لا يمكن تفعيل الملف قبل توقيع اتفاقية الأتعاب.");
+      }
+
+      if (form.poaStatus !== "valid") {
+        messages.push("لا يمكن تفعيل الملف قبل اعتماد سند الوكالة.");
+      }
+    }
+  }
+
+  return messages;
+}
+
+function projectedStatusLabel(status: IntakeWorkflowStatus) {
+  if (status === "draft") return "draft (مسودة)";
+  if (status === "pending_documents") return "pending documents (بانتظار استكمال المستندات)";
+  return "active (نشط)";
 }

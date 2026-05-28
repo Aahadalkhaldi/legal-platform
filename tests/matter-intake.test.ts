@@ -2,9 +2,13 @@ import { describe, expect, it } from "vitest";
 import { ApiError } from "@/lib/api/errors";
 import {
   buildMatterIntakeMetadata,
+  evaluateRepresentationReadiness,
   isMissingRelationError,
   isUndefinedColumnError,
+  mapWorkflowStatusToMatterStatus,
   normalizeMatterIntakeError,
+  readWorkflowStatusFromMatter,
+  resolveMatterIntakeWorkflowStatus,
 } from "@/lib/api/matter-intake";
 import { createMatterIntakeSchema } from "@/lib/api/schemas";
 
@@ -36,6 +40,7 @@ describe("matter intake schema", () => {
 
     expect(payload.initialAction).toBe("lawsuit");
     expect(payload.lawsuit?.caseNumber).toBe("2026/1024");
+    expect(payload.saveMode).toBe("activate");
   });
 
   it("requires lawsuit details when initialAction is lawsuit", () => {
@@ -89,11 +94,18 @@ describe("matter intake helpers", () => {
       opponentId: "33333333-3333-4333-8333-333333333333",
       proceedingId: null,
       fallbackSteps: ["client_saved_in_metadata", "initial_action_saved_in_metadata"],
+      workflowStatus: "pending_documents",
+      representationReadiness: {
+        readyForActivation: false,
+        issues: ["engagement_not_signed"],
+      },
     });
 
     expect(metadata.intakeMvp.client.persisted).toBe(false);
     expect(metadata.intakeMvp.opposingParty.persisted).toBe(true);
     expect(metadata.intakeMvp.initialAction.persisted).toBe(false);
+    expect(metadata.intakeMvp.workflowStatus).toBe("pending_documents");
+    expect(metadata.intakeMvp.representationReadiness.readyForActivation).toBe(false);
     expect(metadata.intakeMvp.fallbackSteps).toContain("client_saved_in_metadata");
   });
 
@@ -122,5 +134,48 @@ describe("matter intake helpers", () => {
     });
     expect(normalizedDbError.code).toBe("BAD_REQUEST");
     expect(normalizedDbError.message).toBe("duplicate key value violates unique constraint");
+  });
+
+  it("resolves workflow status from save mode and representation readiness", () => {
+    const payload = createMatterIntakeSchema.parse({
+      ...basePayload,
+      saveMode: "activate",
+      initialAction: "lawsuit",
+      lawsuit: { caseNumber: "2026/1024" },
+    });
+    const readiness = evaluateRepresentationReadiness(payload);
+    expect(readiness.readyForActivation).toBe(true);
+
+    const activeWorkflow = resolveMatterIntakeWorkflowStatus({
+      saveMode: "activate",
+      representationReadiness: readiness,
+    });
+    expect(activeWorkflow).toBe("active");
+    expect(mapWorkflowStatusToMatterStatus(activeWorkflow)).toBe("open");
+
+    const pendingWorkflow = resolveMatterIntakeWorkflowStatus({
+      saveMode: "activate",
+      representationReadiness: {
+        readyForActivation: false,
+        issues: ["poa_not_valid"],
+      },
+    });
+    expect(pendingWorkflow).toBe("pending_documents");
+    expect(mapWorkflowStatusToMatterStatus(pendingWorkflow)).toBe("on_hold");
+
+    const draftWorkflow = resolveMatterIntakeWorkflowStatus({
+      saveMode: "draft",
+      representationReadiness: readiness,
+    });
+    expect(draftWorkflow).toBe("draft");
+  });
+
+  it("reads workflow status from metadata with safe fallback", () => {
+    expect(readWorkflowStatusFromMatter({
+      intakeMvp: { workflowStatus: "pending_documents" },
+    }, "open")).toBe("pending_documents");
+
+    expect(readWorkflowStatusFromMatter({}, "open")).toBe("active");
+    expect(readWorkflowStatusFromMatter({}, "on_hold")).toBe("draft");
   });
 });

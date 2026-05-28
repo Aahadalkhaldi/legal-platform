@@ -3,6 +3,7 @@ import { writeAuditEvent } from "@/lib/api/audit";
 import { ApiError, fail, ok, requestId } from "@/lib/api/errors";
 import { normalizePlatformRole } from "@/lib/access-control";
 import { assertMatterAccess } from "@/lib/api/matters-access";
+import { readWorkflowStatusFromMatter } from "@/lib/api/matter-intake";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 
 export async function GET(request: Request, contextParams: { params: Promise<{ matterId: string }> }) {
@@ -69,6 +70,7 @@ export async function GET(request: Request, contextParams: { params: Promise<{ m
         description: matter.description,
         status: matter.status,
         intakeType: matter.intake_type,
+        intakeWorkflowStatus: readWorkflowStatusFromMatter(matter.metadata, matter.status),
         openedAt: matter.opened_at,
         closedAt: matter.closed_at,
         updatedAt: matter.updated_at,

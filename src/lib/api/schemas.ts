@@ -140,6 +140,7 @@ export const intakeConflictCheckStatusSchema = z.enum(["clear", "pending"]);
 export const intakeAgreementStatusSchema = z.enum(["signed", "pending"]);
 export const intakePoaStatusSchema = z.enum(["valid", "pending"]);
 export const intakeInitialActionSchema = z.enum(["lawsuit", "complaint"]);
+export const intakeSaveModeSchema = z.enum(["draft", "activate"]);
 export const intakeComplaintActionTypeSchema = z.enum([
   "police_report",
   "public_prosecution_complaint",
@@ -161,6 +162,7 @@ export const createLegalMatterSchema = z.object({
 });
 
 export const createMatterIntakeSchema = z.object({
+  saveMode: intakeSaveModeSchema.default("activate"),
   client: z.object({
     fullName: z.string().trim().min(2).max(240),
     displayName: z.string().trim().max(240).optional(),
@@ -188,7 +190,7 @@ export const createMatterIntakeSchema = z.object({
   }),
   initialAction: intakeInitialActionSchema,
   lawsuit: z.object({
-    caseNumber: z.string().trim().min(1).max(80),
+    caseNumber: z.string().trim().max(80).optional(),
     courtId: z.string().uuid().optional(),
     circuit: z.string().trim().max(120).optional(),
     department: z.string().trim().max(120).optional(),
@@ -196,7 +198,7 @@ export const createMatterIntakeSchema = z.object({
   }).optional(),
   complaint: z.object({
     actionType: intakeComplaintActionTypeSchema.default("police_report"),
-    authority: z.string().trim().min(2).max(180),
+    authority: z.string().trim().max(180).optional(),
     reportNumber: z.string().trim().max(120).optional(),
     submissionDate: z.string().datetime().optional(),
     complainant: z.string().trim().max(240).optional(),

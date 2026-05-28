@@ -11,6 +11,19 @@ export const MATTER_INTAKE_FALLBACK_STEPS = [
 ] as const;
 
 export type MatterIntakeFallbackStep = (typeof MATTER_INTAKE_FALLBACK_STEPS)[number];
+export const MATTER_INTAKE_WORKFLOW_STATUSES = ["draft", "active", "pending_documents"] as const;
+export type MatterIntakeWorkflowStatus = (typeof MATTER_INTAKE_WORKFLOW_STATUSES)[number];
+export type MatterIntakeSaveMode = "draft" | "activate";
+
+type RepresentationReadinessIssue =
+  | "conflict_check_not_clear"
+  | "engagement_not_signed"
+  | "poa_not_valid";
+
+type RepresentationReadiness = {
+  readyForActivation: boolean;
+  issues: RepresentationReadinessIssue[];
+};
 
 type PgErrorLike = {
   code?: unknown;
@@ -81,6 +94,8 @@ export function buildMatterIntakeMetadata(input: {
   opponentId: string | null;
   proceedingId: string | null;
   fallbackSteps: MatterIntakeFallbackStep[];
+  workflowStatus: MatterIntakeWorkflowStatus;
+  representationReadiness: RepresentationReadiness;
 }) {
   const initialActionDetails = input.payload.initialAction === "lawsuit"
     ? input.payload.lawsuit ?? null
@@ -91,6 +106,8 @@ export function buildMatterIntakeMetadata(input: {
       version: 1,
       capturedAt: new Date().toISOString(),
       actorUserId: input.context.userId,
+      saveMode: input.payload.saveMode,
+      workflowStatus: input.workflowStatus,
       conflictCheck: {
         status: input.payload.conflictCheckStatus,
       },
@@ -116,9 +133,83 @@ export function buildMatterIntakeMetadata(input: {
         persisted: Boolean(input.proceedingId),
         payload: initialActionDetails,
       },
+      representationReadiness: input.representationReadiness,
       fallbackSteps: input.fallbackSteps,
     },
   };
+}
+
+export function resolveMatterIntakeWorkflowStatus(input: {
+  saveMode: MatterIntakeSaveMode;
+  representationReadiness: RepresentationReadiness;
+}): MatterIntakeWorkflowStatus {
+  if (input.saveMode === "draft") {
+    return "draft";
+  }
+
+  if (input.representationReadiness.readyForActivation) {
+    return "active";
+  }
+
+  return "pending_documents";
+}
+
+export function evaluateRepresentationReadiness(payload: CreateMatterIntakePayload): RepresentationReadiness {
+  const issues: RepresentationReadinessIssue[] = [];
+
+  if (payload.conflictCheckStatus !== "clear") {
+    issues.push("conflict_check_not_clear");
+  }
+
+  if (payload.engagementAgreementStatus !== "signed") {
+    issues.push("engagement_not_signed");
+  }
+
+  if (payload.poaStatus !== "valid") {
+    issues.push("poa_not_valid");
+  }
+
+  return {
+    readyForActivation: issues.length === 0,
+    issues,
+  };
+}
+
+export function mapWorkflowStatusToMatterStatus(workflowStatus: MatterIntakeWorkflowStatus) {
+  if (workflowStatus === "active") {
+    return "open";
+  }
+
+  return "on_hold";
+}
+
+export function readWorkflowStatusFromMatter(metadata: unknown, matterStatus: string | null | undefined): MatterIntakeWorkflowStatus {
+  if (metadata && typeof metadata === "object") {
+    const candidate = (metadata as { intakeMvp?: { workflowStatus?: unknown } }).intakeMvp?.workflowStatus;
+    if (typeof candidate === "string" && MATTER_INTAKE_WORKFLOW_STATUSES.includes(candidate as MatterIntakeWorkflowStatus)) {
+      return candidate as MatterIntakeWorkflowStatus;
+    }
+  }
+
+  if (matterStatus === "open") {
+    return "active";
+  }
+
+  return "draft";
+}
+
+export function listRepresentationReadinessMessages(issues: RepresentationReadinessIssue[]) {
+  return issues.map((issue) => {
+    if (issue === "conflict_check_not_clear") {
+      return "نتيجة فحص تعارض المصالح يجب أن تكون: سليم.";
+    }
+
+    if (issue === "engagement_not_signed") {
+      return "حالة اتفاقية الأتعاب يجب أن تكون: موقّعة.";
+    }
+
+    return "حالة سند الوكالة يجب أن تكون: ساري/صحيح.";
+  });
 }
 
 function asPgError(error: unknown) {

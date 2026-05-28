@@ -18,6 +18,7 @@ import { requestApiWithSession, SessionRequiredError } from "@/lib/api/browser-c
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 type IntakeType = "lawsuit" | "complaint_report" | "consultation" | "contract_document";
+type IntakeWorkflowStatus = "draft" | "active" | "pending_documents";
 type ActionType =
   | "lawsuit"
   | "appeal"
@@ -52,6 +53,7 @@ type MatterDetail = {
   description: string | null;
   status: string;
   intakeType: IntakeType | null;
+  intakeWorkflowStatus: IntakeWorkflowStatus;
   openedAt: string | null;
   closedAt: string | null;
   updatedAt: string;
@@ -394,6 +396,11 @@ export default function MatterDetailPage() {
           <p className="muted" style={{ marginBottom: 14 }}>
             Matter number: {matter?.matterNumber ?? "N/A"} | Status: {matter?.status ?? "N/A"} | Intake type: {matter?.intakeType ?? "N/A"}
           </p>
+          {matter ? (
+            <p style={{ margin: "0 0 14px", fontWeight: 700 }}>
+              Intake status: {matterStatusLabel(matter.intakeWorkflowStatus)}
+            </p>
+          ) : null}
 
           <div className="actions">
             <button
@@ -871,4 +878,10 @@ function toIsoOrUndefined(value: string) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return undefined;
   return parsed.toISOString();
+}
+
+function matterStatusLabel(status: IntakeWorkflowStatus) {
+  if (status === "draft") return "Draft";
+  if (status === "pending_documents") return "Pending Documents";
+  return "Active";
 }
