@@ -6,6 +6,13 @@
 
 create extension if not exists pgcrypto;
 
+-- Intake type drift repair for environments that missed this column.
+alter table public.legal_matters
+add column if not exists intake_type text;
+
+create index if not exists legal_matters_intake_type_idx
+on public.legal_matters(account_id, intake_type);
+
 create table if not exists public.opponents (
   id uuid primary key default gen_random_uuid(),
   account_id uuid not null references public.accounts(id) on delete cascade,
