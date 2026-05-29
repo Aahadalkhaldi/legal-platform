@@ -17,6 +17,7 @@ import {
 import { hasMatterAction } from "@/lib/access-control";
 import { requestApiWithSession, SessionRequiredError } from "@/lib/api/browser-client";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { deriveMatterLifecycleSummary, readProceedingLifecycle } from "@/lib/proceeding-lifecycle";
 
 type IntakeType = "lawsuit" | "complaint_report" | "consultation" | "contract_document";
 type IntakeWorkflowStatus = "draft" | "active" | "pending_documents";
@@ -104,6 +105,9 @@ type Proceeding = {
   filingDate: string | null;
   nextDeadlineAt: string | null;
   feesAmountQar: number | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string | null;
+  updatedAt: string | null;
   hearings: unknown[];
   documents: unknown[];
   tasks: unknown[];
@@ -126,11 +130,14 @@ type MatterActionDraft = {
 
 type TimelineEntry = {
   id: string;
+  eventType: string;
+  title: string;
+  description: string | null;
   actionType: string;
   stage: string;
   status: string;
   reference: string;
-  dueDate: string | null;
+  eventDate: string | null;
   hearingsCount: number;
   updatesCount: number;
 };
@@ -572,16 +579,53 @@ export default function MatterDetailPage() {
 
   const proceedings = useMemo(() => matter?.proceedings ?? [], [matter]);
 
-  const timelineEntries = useMemo<TimelineEntry[]>(() => proceedings.map((row) => ({
-    id: row.id,
-    actionType: row.actionType,
-    stage: row.stage,
-    status: row.status,
-    reference: row.caseNumber ?? row.reportNumber ?? row.id,
-    dueDate: row.nextDeadlineAt,
-    hearingsCount: row.hearings.length,
-    updatesCount: row.updates.length,
-  })), [proceedings]);
+  const lifecycleSummary = useMemo(() => deriveMatterLifecycleSummary(
+    proceedings.map((row) => ({
+      stage: row.stage,
+      status: row.status,
+      actionType: row.actionType,
+      nextDeadlineAt: row.nextDeadlineAt,
+    })),
+  ), [proceedings]);
+
+  const timelineEntries = useMemo<TimelineEntry[]>(() => {
+    const items: TimelineEntry[] = [];
+
+    for (const row of proceedings) {
+      items.push({
+        id: `${row.id}:proceeding-started`,
+        eventType: "proceeding",
+        title: `${row.actionType} proceeding started`,
+        description: null,
+        actionType: row.actionType,
+        stage: row.stage,
+        status: row.status,
+        reference: row.caseNumber ?? row.reportNumber ?? row.id,
+        eventDate: row.createdAt ?? row.filingDate ?? row.submissionDate,
+        hearingsCount: row.hearings.length,
+        updatesCount: row.updates.length,
+      });
+
+      const lifecycle = readProceedingLifecycle(row.metadata);
+      for (const event of lifecycle.timeline) {
+        items.push({
+          id: `${row.id}:${event.id}`,
+          eventType: event.eventType,
+          title: event.title,
+          description: event.description,
+          actionType: row.actionType,
+          stage: event.stage || row.stage,
+          status: row.status,
+          reference: row.caseNumber ?? row.reportNumber ?? row.id,
+          eventDate: event.eventDate,
+          hearingsCount: row.hearings.length,
+          updatesCount: row.updates.length,
+        });
+      }
+    }
+
+    return items.sort((a, b) => (b.eventDate ?? "").localeCompare(a.eventDate ?? ""));
+  }, [proceedings]);
 
   const hearings = useMemo<HearingEntry[]>(() => proceedings.flatMap((row) => row.hearings.map((entry, index) => {
     const record = asRecord(entry);
@@ -664,6 +708,17 @@ export default function MatterDetailPage() {
               Intake status: {matterStatusLabel(matter.intakeWorkflowStatus)}
             </p>
           ) : null}
+          <div style={{ marginBottom: 14, display: "grid", gap: 4 }}>
+            <p style={{ margin: 0, fontWeight: 700 }}>
+              Lifecycle Progress: {lifecycleSummary.progressPercent}%
+            </p>
+            <p className="muted" style={{ margin: 0 }}>
+              Current Stage: {lifecycleSummary.currentStage}
+            </p>
+            <p className="muted" style={{ margin: 0 }}>
+              Next Legal Action: {lifecycleSummary.nextLegalAction}
+            </p>
+          </div>
 
           <div className="actions">
             <button
@@ -1038,6 +1093,11 @@ export default function MatterDetailPage() {
                     <span>Notifications: {row.updates.length}</span>
                     <span>Billing Records: {row.fees.length}</span>
                   </div>
+                  <div style={{ marginTop: 10 }}>
+                    <Link className="button button-secondary" href={`/matters/${matterId}/proceedings/${row.id}`}>
+                      Open Proceeding Workspace
+                    </Link>
+                  </div>
                 </article>
               ))}
             </div>
@@ -1060,12 +1120,13 @@ export default function MatterDetailPage() {
               {timelineEntries.map((entry) => (
                 <article key={entry.id} style={cardStyle}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                    <strong>{entry.actionType}</strong>
-                    <span className="status-chip">{entry.status}</span>
+                    <strong>{entry.title}</strong>
+                    <span className="status-chip">{entry.eventType}</span>
                   </div>
                   <p className="muted" style={{ margin: "6px 0 0" }}>
-                    Ref: {entry.reference} | Stage: {entry.stage} | Next due: {formatDate(entry.dueDate)}
+                    Ref: {entry.reference} | Stage: {entry.stage} | Event date: {formatDate(entry.eventDate)}
                   </p>
+                  {entry.description ? <p style={{ margin: "6px 0 0" }}>{entry.description}</p> : null}
                   <p className="muted" style={{ margin: "6px 0 0" }}>
                     Hearings: {entry.hearingsCount} | Notifications: {entry.updatesCount}
                   </p>
