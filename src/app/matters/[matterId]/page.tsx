@@ -7,6 +7,7 @@ import {
   CircleChevronRight,
   CirclePlus,
   FilePlus2,
+  FolderOpen,
   Gavel,
   Link2,
   LoaderCircle,
@@ -34,6 +35,18 @@ type ActionType =
 
 type MatterDetailResponse = {
   data: MatterDetail;
+  requestId: string;
+};
+
+type MatterDraftsResponse = {
+  data: MatterActionDraft[];
+  requestId: string;
+};
+
+type CreateDraftResponse = {
+  data: {
+    draft: MatterActionDraft;
+  };
   requestId: string;
 };
 
@@ -98,6 +111,77 @@ type Proceeding = {
   parties: unknown[];
   fees: unknown[];
   deadlines: unknown[];
+};
+
+type MatterActionDraft = {
+  id: string;
+  actionType: string;
+  status: "draft";
+  title: string;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+  source: "matter_detail";
+};
+
+type TimelineEntry = {
+  id: string;
+  actionType: string;
+  stage: string;
+  status: string;
+  reference: string;
+  dueDate: string | null;
+  hearingsCount: number;
+  updatesCount: number;
+};
+
+type HearingEntry = {
+  id: string;
+  proceedingId: string;
+  actionType: string;
+  hearingAt: string | null;
+  status: string | null;
+  agenda: string | null;
+  outcome: string | null;
+};
+
+type NotificationEntry = {
+  id: string;
+  proceedingId: string;
+  actionType: string;
+  title: string | null;
+  createdAt: string | null;
+};
+
+type DocumentEntry = {
+  id: string;
+  proceedingId: string;
+  actionType: string;
+  title: string | null;
+  documentType: string | null;
+  classification: string | null;
+  updatedAt: string | null;
+};
+
+type TaskEntry = {
+  id: string;
+  proceedingId: string;
+  actionType: string;
+  title: string | null;
+  status: string | null;
+  priority: string | null;
+  dueAt: string | null;
+};
+
+type BillingEntry = {
+  id: string;
+  proceedingId: string;
+  actionType: string;
+  invoiceNumber: string | null;
+  status: string | null;
+  totalAmount: number | null;
+  balanceDue: number | null;
+  dueAt: string | null;
 };
 
 type CreateProceedingForm = {
@@ -166,6 +250,15 @@ export default function MatterDetailPage() {
   const [matter, setMatter] = useState<MatterDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const [drafts, setDrafts] = useState<MatterActionDraft[]>([]);
+  const [draftsLoading, setDraftsLoading] = useState(true);
+  const [draftsErrorMessage, setDraftsErrorMessage] = useState<string | null>(null);
+  const [creatingDraft, setCreatingDraft] = useState(false);
+  const [createDraftError, setCreateDraftError] = useState<string | null>(null);
+  const [createDraftSuccess, setCreateDraftSuccess] = useState<string | null>(null);
+  const [activeDraftId, setActiveDraftId] = useState<string | null>(null);
+
   const [showProceedingForm, setShowProceedingForm] = useState(false);
   const [proceedingForm, setProceedingForm] = useState<CreateProceedingForm>(EMPTY_PROCEEDING_FORM);
   const [creatingProceeding, setCreatingProceeding] = useState(false);
@@ -184,6 +277,14 @@ export default function MatterDetailPage() {
     }
 
     return requestApiWithSession<MatterDetailResponse>(supabase, `/api/v1/matters/${matterId}`);
+  }, [matterId, supabase]);
+
+  const fetchDrafts = useCallback(async () => {
+    if (!matterId) {
+      return null;
+    }
+
+    return requestApiWithSession<MatterDraftsResponse>(supabase, `/api/v1/matters/${matterId}/drafts`);
   }, [matterId, supabase]);
 
   const loadViewerAccess = useCallback(async () => {
@@ -226,18 +327,50 @@ export default function MatterDetailPage() {
     }
   }, [fetchMatter, matterId, router]);
 
+  const loadDrafts = useCallback(async () => {
+    if (!matterId) return;
+
+    setDraftsLoading(true);
+    setDraftsErrorMessage(null);
+
+    try {
+      const payload = await fetchDrafts();
+      if (!payload) return;
+      setDrafts(payload.data);
+      setActiveDraftId((current) => current ?? payload.data[0]?.id ?? null);
+    } catch (error) {
+      if (error instanceof SessionRequiredError) {
+        router.replace(`/login?next=${encodeURIComponent(`/matters/${matterId}`)}`);
+        return;
+      }
+
+      setDraftsErrorMessage(error instanceof Error ? error.message : "Failed to load drafts.");
+    } finally {
+      setDraftsLoading(false);
+    }
+  }, [fetchDrafts, matterId, router]);
+
   useEffect(() => {
     let isMounted = true;
 
     const bootstrap = async () => {
+      setLoading(true);
+      setDraftsLoading(true);
+      setErrorMessage(null);
+      setDraftsErrorMessage(null);
+
       try {
         const [payload] = await Promise.all([
           fetchMatter(),
           loadViewerAccess(),
         ]);
-        if (!payload || !isMounted) return;
-        setMatter(payload.data);
-        setSelectedProceedingId(payload.data.proceedings[0]?.id ?? "");
+
+        if (!isMounted) return;
+
+        if (payload) {
+          setMatter(payload.data);
+          setSelectedProceedingId(payload.data.proceedings[0]?.id ?? "");
+        }
       } catch (error) {
         if (error instanceof SessionRequiredError) {
           router.replace(`/login?next=${encodeURIComponent(`/matters/${matterId}`)}`);
@@ -251,13 +384,33 @@ export default function MatterDetailPage() {
           setLoading(false);
         }
       }
+
+      try {
+        const draftsPayload = await fetchDrafts();
+        if (!isMounted || !draftsPayload) return;
+
+        setDrafts(draftsPayload.data);
+        setActiveDraftId(draftsPayload.data[0]?.id ?? null);
+      } catch (error) {
+        if (error instanceof SessionRequiredError) {
+          router.replace(`/login?next=${encodeURIComponent(`/matters/${matterId}`)}`);
+          return;
+        }
+
+        if (!isMounted) return;
+        setDraftsErrorMessage(error instanceof Error ? error.message : "Failed to load drafts.");
+      } finally {
+        if (isMounted) {
+          setDraftsLoading(false);
+        }
+      }
     };
 
     void bootstrap();
     return () => {
       isMounted = false;
     };
-  }, [fetchMatter, loadViewerAccess, matterId, router]);
+  }, [fetchDrafts, fetchMatter, loadViewerAccess, matterId, router]);
 
   const canCreateProceeding = useMemo(() => hasMatterAction({
     role: viewerRole,
@@ -342,6 +495,38 @@ export default function MatterDetailPage() {
     }
   }
 
+  async function handleCreateDraft() {
+    if (!matterId) return;
+    if (!canCreateProceeding) {
+      setCreateDraftError("You do not have permission to create drafts.");
+      return;
+    }
+
+    setCreatingDraft(true);
+    setCreateDraftError(null);
+    setCreateDraftSuccess(null);
+
+    try {
+      const payload = await requestApiWithSession<CreateDraftResponse>(supabase, `/api/v1/matters/${matterId}/drafts`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+
+      await loadDrafts();
+      setActiveDraftId(payload.data.draft.id);
+      setCreateDraftSuccess("Draft created successfully.");
+    } catch (error) {
+      if (error instanceof SessionRequiredError) {
+        router.replace(`/login?next=${encodeURIComponent(`/matters/${matterId}`)}`);
+        return;
+      }
+
+      setCreateDraftError(error instanceof Error ? error.message : "Failed to create draft.");
+    } finally {
+      setCreatingDraft(false);
+    }
+  }
+
   async function handleTransition(action: TransitionAction) {
     if (!matterId || !selectedProceedingId) {
       setActionErrorMessage("Select a source proceeding first.");
@@ -385,11 +570,89 @@ export default function MatterDetailPage() {
   const showComplaintFields = complaintActionTypes.includes(proceedingForm.actionType);
   const showLawsuitFields = lawsuitActionTypes.includes(proceedingForm.actionType);
 
+  const proceedings = useMemo(() => matter?.proceedings ?? [], [matter]);
+
+  const timelineEntries = useMemo<TimelineEntry[]>(() => proceedings.map((row) => ({
+    id: row.id,
+    actionType: row.actionType,
+    stage: row.stage,
+    status: row.status,
+    reference: row.caseNumber ?? row.reportNumber ?? row.id,
+    dueDate: row.nextDeadlineAt,
+    hearingsCount: row.hearings.length,
+    updatesCount: row.updates.length,
+  })), [proceedings]);
+
+  const hearings = useMemo<HearingEntry[]>(() => proceedings.flatMap((row) => row.hearings.map((entry, index) => {
+    const record = asRecord(entry);
+    return {
+      id: stringValue(record?.id) ?? `${row.id}:hearing:${index}`,
+      proceedingId: row.id,
+      actionType: row.actionType,
+      hearingAt: stringValue(record?.hearing_at),
+      status: stringValue(record?.status),
+      agenda: stringValue(record?.agenda),
+      outcome: stringValue(record?.outcome),
+    };
+  })), [proceedings]);
+
+  const notifications = useMemo<NotificationEntry[]>(() => proceedings.flatMap((row) => row.updates.map((entry, index) => {
+    const record = asRecord(entry);
+    return {
+      id: stringValue(record?.id) ?? `${row.id}:update:${index}`,
+      proceedingId: row.id,
+      actionType: row.actionType,
+      title: stringValue(record?.title),
+      createdAt: stringValue(record?.created_at),
+    };
+  })), [proceedings]);
+
+  const documents = useMemo<DocumentEntry[]>(() => proceedings.flatMap((row) => row.documents.map((entry, index) => {
+    const record = asRecord(entry);
+    return {
+      id: stringValue(record?.id) ?? `${row.id}:document:${index}`,
+      proceedingId: row.id,
+      actionType: row.actionType,
+      title: stringValue(record?.title),
+      documentType: stringValue(record?.document_type),
+      classification: stringValue(record?.classification),
+      updatedAt: stringValue(record?.updated_at),
+    };
+  })), [proceedings]);
+
+  const tasks = useMemo<TaskEntry[]>(() => proceedings.flatMap((row) => row.tasks.map((entry, index) => {
+    const record = asRecord(entry);
+    return {
+      id: stringValue(record?.id) ?? `${row.id}:task:${index}`,
+      proceedingId: row.id,
+      actionType: row.actionType,
+      title: stringValue(record?.title),
+      status: stringValue(record?.status),
+      priority: stringValue(record?.priority),
+      dueAt: stringValue(record?.due_at),
+    };
+  })), [proceedings]);
+
+  const billingEntries = useMemo<BillingEntry[]>(() => proceedings.flatMap((row) => row.fees.map((entry, index) => {
+    const record = asRecord(entry);
+    return {
+      id: stringValue(record?.id) ?? `${row.id}:invoice:${index}`,
+      proceedingId: row.id,
+      actionType: row.actionType,
+      invoiceNumber: stringValue(record?.invoice_number),
+      status: stringValue(record?.status),
+      totalAmount: numberValue(record?.total_amount),
+      balanceDue: numberValue(record?.balance_due),
+      dueAt: stringValue(record?.due_at),
+    };
+  })), [proceedings]);
+
   return (
     <main className="app-shell">
       <div className="page-container">
         <section className="panel" style={{ marginBottom: 16 }}>
           <p className="eyebrow">Legal Matter Detail</p>
+          <h2 style={{ marginTop: 0 }}>Overview</h2>
           <h1 style={{ margin: "8px 0 8px", fontSize: 32 }}>
             {matter?.title ?? `Matter ${matterId}`}
           </h1>
@@ -458,7 +721,7 @@ export default function MatterDetailPage() {
               Link Related Case
             </button>
 
-            <button type="button" className="button button-secondary" onClick={() => void loadMatter()} disabled={loading}>
+            <button type="button" className="button button-secondary" onClick={() => void Promise.all([loadMatter(), loadDrafts()])} disabled={loading || draftsLoading}>
               <RefreshCw size={18} />
               Refresh
             </button>
@@ -478,7 +741,7 @@ export default function MatterDetailPage() {
                 style={inputStyle}
               >
                 <option value="">Choose proceeding</option>
-                {(matter?.proceedings ?? []).map((row) => (
+                {proceedings.map((row) => (
                   <option key={row.id} value={row.id}>
                     {row.actionType} | {row.caseNumber ?? row.reportNumber ?? row.id}
                   </option>
@@ -732,11 +995,11 @@ export default function MatterDetailPage() {
           ) : null}
         </section>
 
-        <section className="panel">
-          <h2 style={{ marginTop: 0 }}>Proceedings Timeline</h2>
+        <section className="panel" style={{ marginBottom: 16 }}>
+          <h2 style={{ marginTop: 0 }}>Proceedings</h2>
 
           {loading ? (
-            <p className="muted" style={{ margin: 0 }}>Loading matter details...</p>
+            <p className="muted" style={{ margin: 0 }}>Loading proceedings...</p>
           ) : null}
 
           {!loading && errorMessage ? (
@@ -748,58 +1011,244 @@ export default function MatterDetailPage() {
             </div>
           ) : null}
 
-          {!loading && !errorMessage && matter && matter.proceedings.length === 0 ? (
-            <p className="muted" style={{ margin: 0 }}>
-              No proceedings or complaints found for this matter yet.
-            </p>
+          {!loading && !errorMessage && proceedings.length === 0 ? (
+            <p className="muted" style={{ margin: 0 }}>No proceedings available for this matter yet.</p>
           ) : null}
 
-          {!loading && !errorMessage && matter && matter.proceedings.length > 0 ? (
-            <div style={{ display: "grid", gap: 14 }}>
-              {matter.proceedings.map((row) => (
-                <article
-                  key={row.id}
-                  style={{
-                    border: "1px solid var(--line)",
-                    borderRadius: 8,
-                    padding: 14,
-                    background: "var(--surface)",
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          {!loading && !errorMessage && proceedings.length > 0 ? (
+            <div style={{ display: "grid", gap: 12 }}>
+              {proceedings.map((row) => (
+                <article key={row.id} style={cardStyle}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
                     <div>
                       <strong>{row.actionType}</strong>
-                      <p className="muted" style={{ marginTop: 4 }}>
-                        {row.caseNumber ?? row.reportNumber ?? "N/A"} - {row.court?.nameAr ?? row.authority ?? "N/A"}
+                      <p className="muted" style={{ margin: "4px 0 0" }}>
+                        {row.caseNumber ?? row.reportNumber ?? row.id}
                       </p>
                     </div>
                     <span className="status-chip">{row.status}</span>
                   </div>
-
-                  <div
-                    style={{
-                      marginTop: 12,
-                      display: "grid",
-                      gap: 8,
-                      gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-                    }}
-                  >
+                  <div style={detailsGridStyle}>
                     <span>Stage: {row.stage}</span>
+                    <span>Court/Authority: {row.court?.nameAr ?? row.authority ?? "N/A"}</span>
                     <span>Circuit/Dept: {row.circuit ?? row.department ?? "N/A"}</span>
-                    <span>Claim: {row.claimType ?? "N/A"}</span>
-                    <span>Complainant: {row.complainant ?? "N/A"}</span>
-                    <span>Respondent: {row.respondent ?? "N/A"}</span>
-                    <span>Sessions: {row.investigationSessions?.length ?? 0}</span>
-                    <span>Prosecutor/Station: {row.prosecutorName ?? row.policeStation ?? "N/A"}</span>
-                    <span>Client Shared: {row.clientVisible ? "yes" : "no"}</span>
                     <span>Hearings: {row.hearings.length}</span>
                     <span>Documents: {row.documents.length}</span>
                     <span>Tasks: {row.tasks.length}</span>
-                    <span>Updates: {row.updates.length}</span>
-                    <span>Parties: {row.parties.length}</span>
-                    <span>Fees: {row.fees.length}</span>
-                    <span>Deadline: {row.nextDeadlineAt ? new Date(row.nextDeadlineAt).toLocaleDateString() : "N/A"}</span>
+                    <span>Notifications: {row.updates.length}</span>
+                    <span>Billing Records: {row.fees.length}</span>
                   </div>
+                </article>
+              ))}
+            </div>
+          ) : null}
+        </section>
+
+        <section className="panel" style={{ marginBottom: 16 }}>
+          <h2 style={{ marginTop: 0 }}>Timeline</h2>
+
+          {loading ? (
+            <p className="muted" style={{ margin: 0 }}>Loading timeline...</p>
+          ) : null}
+
+          {!loading && !errorMessage && timelineEntries.length === 0 ? (
+            <p className="muted" style={{ margin: 0 }}>No timeline events yet.</p>
+          ) : null}
+
+          {!loading && !errorMessage && timelineEntries.length > 0 ? (
+            <div style={{ display: "grid", gap: 10 }}>
+              {timelineEntries.map((entry) => (
+                <article key={entry.id} style={cardStyle}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                    <strong>{entry.actionType}</strong>
+                    <span className="status-chip">{entry.status}</span>
+                  </div>
+                  <p className="muted" style={{ margin: "6px 0 0" }}>
+                    Ref: {entry.reference} | Stage: {entry.stage} | Next due: {formatDate(entry.dueDate)}
+                  </p>
+                  <p className="muted" style={{ margin: "6px 0 0" }}>
+                    Hearings: {entry.hearingsCount} | Notifications: {entry.updatesCount}
+                  </p>
+                </article>
+              ))}
+            </div>
+          ) : null}
+
+          <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
+            <h3 style={{ margin: 0, fontSize: 18 }}>Hearings</h3>
+            {hearings.length === 0 ? (
+              <p className="muted" style={{ margin: 0 }}>No hearings scheduled yet.</p>
+            ) : (
+              <div style={{ display: "grid", gap: 8 }}>
+                {hearings.map((hearing) => (
+                  <article key={hearing.id} style={cardStyle}>
+                    <strong>{hearing.actionType}</strong>
+                    <p className="muted" style={{ margin: "4px 0 0" }}>
+                      Hearing: {formatDate(hearing.hearingAt)} | Status: {hearing.status ?? "N/A"}
+                    </p>
+                    {hearing.agenda ? <p style={{ margin: "6px 0 0" }}>Agenda: {hearing.agenda}</p> : null}
+                    {hearing.outcome ? <p style={{ margin: "6px 0 0" }}>Outcome: {hearing.outcome}</p> : null}
+                  </article>
+                ))}
+              </div>
+            )}
+
+            <h3 style={{ margin: "8px 0 0", fontSize: 18 }}>Notifications</h3>
+            {notifications.length === 0 ? (
+              <p className="muted" style={{ margin: 0 }}>No notifications yet.</p>
+            ) : (
+              <div style={{ display: "grid", gap: 8 }}>
+                {notifications.map((notification) => (
+                  <article key={notification.id} style={cardStyle}>
+                    <strong>{notification.title ?? "Update"}</strong>
+                    <p className="muted" style={{ margin: "4px 0 0" }}>
+                      {notification.actionType} | {formatDate(notification.createdAt)}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className="panel" style={{ marginBottom: 16 }}>
+          <h2 style={{ marginTop: 0 }}>Drafts</h2>
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={() => void handleCreateDraft()}
+            disabled={creatingDraft || !canCreateProceeding}
+            title={canCreateProceeding ? undefined : "Missing create_proceeding permission"}
+          >
+            {creatingDraft ? <LoaderCircle size={18} className="animate-spin" /> : <CirclePlus size={18} />}
+            {creatingDraft ? "Creating Draft..." : "Create Draft"}
+          </button>
+
+          {createDraftError ? (
+            <p role="alert" style={{ color: "#b42318", margin: "12px 0 0" }}>{createDraftError}</p>
+          ) : null}
+          {createDraftSuccess ? (
+            <p style={{ color: "#067647", margin: "12px 0 0" }}>{createDraftSuccess}</p>
+          ) : null}
+
+          {draftsLoading ? (
+            <p className="muted" style={{ marginTop: 12 }}>Loading drafts...</p>
+          ) : null}
+
+          {!draftsLoading && draftsErrorMessage ? (
+            <div style={{ marginTop: 12 }}>
+              <p role="alert" style={{ color: "#b42318", marginTop: 0 }}>{draftsErrorMessage}</p>
+              <button type="button" className="button button-secondary" onClick={() => void loadDrafts()}>
+                Retry Drafts
+              </button>
+            </div>
+          ) : null}
+
+          {!draftsLoading && !draftsErrorMessage && drafts.length === 0 ? (
+            <p className="muted" style={{ marginTop: 12 }}>No drafts created yet.</p>
+          ) : null}
+
+          {!draftsLoading && !draftsErrorMessage && drafts.length > 0 ? (
+            <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+              {drafts.map((draft) => {
+                const isActive = activeDraftId === draft.id;
+                return (
+                  <article key={draft.id} style={{ ...cardStyle, borderColor: isActive ? "#0b66ff" : "var(--line)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                      <div>
+                        <strong>{draft.title}</strong>
+                        <p className="muted" style={{ margin: "4px 0 0" }}>
+                          {draft.actionType} | Updated: {formatDate(draft.updatedAt)}
+                        </p>
+                      </div>
+                      <span className="status-chip">{draft.status}</span>
+                    </div>
+                    {draft.notes ? <p style={{ margin: "8px 0 0" }}>{draft.notes}</p> : null}
+                    <button
+                      type="button"
+                      className="button button-secondary"
+                      onClick={() => setActiveDraftId(draft.id)}
+                      style={{ width: "fit-content" }}
+                    >
+                      <FolderOpen size={18} />
+                      Open Draft Workflow
+                    </button>
+                  </article>
+                );
+              })}
+            </div>
+          ) : null}
+        </section>
+
+        <section className="panel" style={{ marginBottom: 16 }}>
+          <h2 style={{ marginTop: 0 }}>Documents</h2>
+          {loading ? (
+            <p className="muted" style={{ margin: 0 }}>Loading documents...</p>
+          ) : null}
+          {!loading && !errorMessage && documents.length === 0 ? (
+            <p className="muted" style={{ margin: 0 }}>No documents found for this matter.</p>
+          ) : null}
+          {!loading && !errorMessage && documents.length > 0 ? (
+            <div style={{ display: "grid", gap: 8 }}>
+              {documents.map((document) => (
+                <article key={document.id} style={cardStyle}>
+                  <strong>{document.title ?? "Untitled Document"}</strong>
+                  <p className="muted" style={{ margin: "4px 0 0" }}>
+                    {document.actionType} | {document.documentType ?? "document"} | {document.classification ?? "N/A"}
+                  </p>
+                  <p className="muted" style={{ margin: "4px 0 0" }}>
+                    Updated: {formatDate(document.updatedAt)}
+                  </p>
+                </article>
+              ))}
+            </div>
+          ) : null}
+        </section>
+
+        <section className="panel" style={{ marginBottom: 16 }}>
+          <h2 style={{ marginTop: 0 }}>Tasks</h2>
+          {loading ? (
+            <p className="muted" style={{ margin: 0 }}>Loading tasks...</p>
+          ) : null}
+          {!loading && !errorMessage && tasks.length === 0 ? (
+            <p className="muted" style={{ margin: 0 }}>No tasks assigned yet.</p>
+          ) : null}
+          {!loading && !errorMessage && tasks.length > 0 ? (
+            <div style={{ display: "grid", gap: 8 }}>
+              {tasks.map((task) => (
+                <article key={task.id} style={cardStyle}>
+                  <strong>{task.title ?? "Untitled Task"}</strong>
+                  <p className="muted" style={{ margin: "4px 0 0" }}>
+                    {task.actionType} | Status: {task.status ?? "N/A"} | Priority: {task.priority ?? "N/A"}
+                  </p>
+                  <p className="muted" style={{ margin: "4px 0 0" }}>
+                    Due: {formatDate(task.dueAt)}
+                  </p>
+                </article>
+              ))}
+            </div>
+          ) : null}
+        </section>
+
+        <section className="panel">
+          <h2 style={{ marginTop: 0 }}>Billing</h2>
+          {loading ? (
+            <p className="muted" style={{ margin: 0 }}>Loading billing records...</p>
+          ) : null}
+          {!loading && !errorMessage && billingEntries.length === 0 ? (
+            <p className="muted" style={{ margin: 0 }}>No billing records available.</p>
+          ) : null}
+          {!loading && !errorMessage && billingEntries.length > 0 ? (
+            <div style={{ display: "grid", gap: 8 }}>
+              {billingEntries.map((entry) => (
+                <article key={entry.id} style={cardStyle}>
+                  <strong>{entry.invoiceNumber ?? "Invoice"}</strong>
+                  <p className="muted" style={{ margin: "4px 0 0" }}>
+                    {entry.actionType} | Status: {entry.status ?? "N/A"}
+                  </p>
+                  <p className="muted" style={{ margin: "4px 0 0" }}>
+                    Total: {formatCurrency(entry.totalAmount)} | Balance: {formatCurrency(entry.balanceDue)} | Due: {formatDate(entry.dueAt)}
+                  </p>
                 </article>
               ))}
             </div>
@@ -873,6 +1322,22 @@ const subPanelTitleStyle: CSSProperties = {
   color: "var(--ink)",
 };
 
+const cardStyle: CSSProperties = {
+  border: "1px solid var(--line)",
+  borderRadius: 8,
+  padding: 12,
+  background: "var(--surface)",
+  display: "grid",
+  gap: 4,
+};
+
+const detailsGridStyle: CSSProperties = {
+  marginTop: 10,
+  display: "grid",
+  gap: 8,
+  gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+};
+
 function toIsoOrUndefined(value: string) {
   if (!value) return undefined;
   const parsed = new Date(value);
@@ -884,4 +1349,41 @@ function matterStatusLabel(status: IntakeWorkflowStatus) {
   if (status === "draft") return "Draft";
   if (status === "pending_documents") return "Pending Documents";
   return "Active";
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function numberValue(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function formatDate(value: string | null) {
+  if (!value) {
+    return "N/A";
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return parsed.toLocaleString();
+}
+
+function formatCurrency(value: number | null) {
+  if (value === null) {
+    return "N/A";
+  }
+
+  return `${value.toFixed(2)} QAR`;
 }
