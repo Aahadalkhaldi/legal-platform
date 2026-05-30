@@ -6,6 +6,10 @@ import { assertMatterAccess, assertMatterActionAccess } from "@/lib/api/matters-
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { normalizePlatformRole, type MatterActionPermission } from "@/lib/access-control";
 import {
+  isSchemaDriftError,
+  normalizeMatterApiError,
+} from "@/lib/api/matter-api-errors";
+import {
   applyProceedingLifecycleMutation,
   buildProceedingTimeline,
   readProceedingLifecycle,
@@ -162,7 +166,11 @@ export async function GET(
       requestId: reqId,
     });
   } catch (error) {
-    return fail(error, reqId);
+    return fail(normalizeMatterApiError(error, {
+      endpoint: "/api/v1/matters/{matterId}/proceedings/{proceedingId}",
+      operation: "load proceeding detail",
+      fallbackMessage: "Failed to load proceeding detail.",
+    }), reqId);
   }
 }
 
@@ -241,7 +249,11 @@ export async function PATCH(
       requestId: reqId,
     });
   } catch (error) {
-    return fail(error, reqId);
+    return fail(normalizeMatterApiError(error, {
+      endpoint: "/api/v1/matters/{matterId}/proceedings/{proceedingId}",
+      operation: "update proceeding lifecycle",
+      fallbackMessage: "Failed to update proceeding lifecycle.",
+    }), reqId);
   }
 }
 
@@ -257,7 +269,7 @@ async function loadProceedingDetail(
   matterId: string,
   proceedingId: string,
 ) {
-  const { data, error } = await supabase
+  const fullResult = await supabase
     .from("matter_proceedings")
     .select("id, account_id, legal_matter_id, parent_proceeding_id, action_type, stage, status, case_number, report_number, authority, complainant, respondent, court_id, circuit, department, claim_type, judgment_summary, metadata, filing_date, next_deadline_at, client_visible, created_at, updated_at")
     .eq("id", proceedingId)
@@ -266,12 +278,47 @@ async function loadProceedingDetail(
     .is("deleted_at", null)
     .maybeSingle();
 
-  if (error) throw error;
-  if (!data) {
+  if (!fullResult.error && fullResult.data) {
+    return fullResult.data;
+  }
+
+  if (fullResult.error && !isSchemaDriftError(fullResult.error)) {
+    throw fullResult.error;
+  }
+
+  if (fullResult.error && isSchemaDriftError(fullResult.error)) {
+    const minimalResult = await supabase
+      .from("matter_proceedings")
+      .select("id, account_id, legal_matter_id, parent_proceeding_id, action_type, stage, status, case_number, report_number, authority, metadata, filing_date, next_deadline_at, client_visible, created_at, updated_at")
+      .eq("id", proceedingId)
+      .eq("account_id", accountId)
+      .eq("legal_matter_id", matterId)
+      .is("deleted_at", null)
+      .maybeSingle();
+
+    if (minimalResult.error) {
+      throw minimalResult.error;
+    }
+
+    if (minimalResult.data) {
+      return {
+        ...minimalResult.data,
+        complainant: null,
+        respondent: null,
+        court_id: null,
+        circuit: null,
+        department: null,
+        claim_type: null,
+        judgment_summary: null,
+      };
+    }
+  }
+
+  if (!fullResult.data) {
     throw new ApiError("NOT_FOUND", "Matter proceeding was not found.");
   }
 
-  return data;
+  return fullResult.data;
 }
 
 async function loadParentProceeding(
@@ -291,7 +338,12 @@ async function loadParentProceeding(
     .is("deleted_at", null)
     .maybeSingle();
 
-  if (error) throw error;
+  if (error) {
+    if (isSchemaDriftError(error)) {
+      return null;
+    }
+    throw error;
+  }
   if (!data) return null;
 
   return {
@@ -311,23 +363,20 @@ async function loadProceedingRows(
   proceedingId: string,
   columns: string,
 ) {
-  try {
-    const { data, error } = await supabase
-      .from(table)
-      .select(columns)
-      .eq("account_id", accountId)
-      .eq("matter_proceeding_id", proceedingId)
-      .is("deleted_at", null);
+  const { data, error } = await supabase
+    .from(table)
+    .select(columns)
+    .eq("account_id", accountId)
+    .eq("matter_proceeding_id", proceedingId)
+    .is("deleted_at", null);
 
-    if (error) throw error;
+  if (!error) {
     return (data ?? []) as unknown as Array<Record<string, unknown>>;
-  } catch (error) {
-    const code = typeof (error as { code?: unknown }).code === "string"
-      ? (error as { code: string }).code
-      : "";
-    if (code === "42P01") {
-      return [];
-    }
-    throw error;
   }
+
+  if (isSchemaDriftError(error)) {
+    return [];
+  }
+
+  throw error;
 }

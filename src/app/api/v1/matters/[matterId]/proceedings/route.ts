@@ -5,6 +5,7 @@ import { writeAuditEvent } from "@/lib/api/audit";
 import { fail, ok, requestId } from "@/lib/api/errors";
 import { createMatterProceedingSchema } from "@/lib/api/schemas";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
+import { normalizeMatterApiError } from "@/lib/api/matter-api-errors";
 
 export async function POST(request: Request, contextParams: { params: Promise<{ matterId: string }> }) {
   const reqId = requestId(request);
@@ -72,6 +73,10 @@ export async function POST(request: Request, contextParams: { params: Promise<{ 
 
     return ok({ data, requestId: reqId }, { status: 201 });
   } catch (error) {
-    return fail(error, reqId);
+    return fail(normalizeMatterApiError(error, {
+      endpoint: "/api/v1/matters/{matterId}/proceedings",
+      operation: "create proceeding",
+      fallbackMessage: "Failed to create proceeding.",
+    }), reqId);
   }
 }

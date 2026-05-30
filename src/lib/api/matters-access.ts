@@ -9,6 +9,7 @@ import {
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import type { CurrentUser } from "@/lib/types";
 import type { MatterProceedingRecord } from "@/lib/api/matter-proceedings";
+import { isMissingRelationError } from "@/lib/api/matter-api-errors";
 
 type LegalMatterAccessRecord = {
   id: string;
@@ -79,7 +80,7 @@ async function resolveMatterAccess(
   context: CurrentUser,
   matterId: string,
 ): Promise<MatterAccessResolution> {
-  const { data, error } = await supabase
+  const primary = await supabase
     .from("legal_matters")
     .select("id, account_id, client_id, client:clients(id, user_id, full_name)")
     .eq("id", matterId)
@@ -87,7 +88,33 @@ async function resolveMatterAccess(
     .is("deleted_at", null)
     .maybeSingle();
 
-  if (error) throw error;
+  let data: LegalMatterAccessRecord | null = primary.data
+    ? (primary.data as unknown as LegalMatterAccessRecord)
+    : null;
+  if (primary.error && isMissingRelationError(primary.error, "clients")) {
+    const fallback = await supabase
+      .from("legal_matters")
+      .select("id, account_id, client_id")
+      .eq("id", matterId)
+      .eq("account_id", context.accountId)
+      .is("deleted_at", null)
+      .maybeSingle();
+
+    if (fallback.error) throw fallback.error;
+    if (fallback.data) {
+      data = {
+        id: fallback.data.id,
+        account_id: fallback.data.account_id,
+        client_id: fallback.data.client_id,
+        client: null,
+      };
+    } else {
+      data = null;
+    }
+  } else if (primary.error) {
+    throw primary.error;
+  }
+
   if (!data) {
     throw new ApiError("NOT_FOUND", "Legal matter was not found.");
   }
