@@ -53,7 +53,7 @@ export async function GET(request: Request) {
     }
 
     let clientIdsFilter: string[] | null = null;
-    if (normalizedRole === "client_portal") {
+    if (normalizedRole === "client_portal" && matterIdsFilter === null) {
       const clientFilter = await loadClientIdsFilter(supabase, context.accountId, context.userId);
       if (clientFilter.status === "none") {
         return ok({ data: [], page: { limit, nextCursor: null } });

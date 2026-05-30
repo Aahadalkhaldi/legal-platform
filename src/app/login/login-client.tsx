@@ -43,7 +43,7 @@ export default function LoginClient() {
       }
 
       const normalizedRole = normalizePlatformRole(mePayload.data.role ?? "client_portal");
-      return normalizedRole === "client_portal" ? "/portal/client" : "/portal/admin";
+      return normalizedRole === "client_portal" ? "/client/dashboard" : "/admin/dashboard";
     } catch {
       return "/matters";
     }

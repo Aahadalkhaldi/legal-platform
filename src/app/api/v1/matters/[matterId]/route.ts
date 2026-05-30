@@ -181,7 +181,14 @@ async function loadMatterForContext(
     .maybeSingle();
 
   if (!withClientJoin.error && withClientJoin.data) {
-    enforceClientPortalScope(context.role, context.userId, withClientJoin.data.client);
+    if (normalizePlatformRole(context.role) === "client_portal") {
+      const client = extractClient(withClientJoin.data.client);
+      const hasLinkedClient = Boolean(client && client.userId === context.userId);
+      const hasSharedMatterAccess = await hasClientMatterShare(supabase, context, matterId);
+      if (!hasLinkedClient && !hasSharedMatterAccess) {
+        throw new ApiError("FORBIDDEN", "Clients can only access shared legal matters.");
+      }
+    }
     return withClientJoin.data;
   }
 
@@ -203,7 +210,10 @@ async function loadMatterForContext(
     }
 
     if (normalizePlatformRole(context.role) === "client_portal") {
-      throw new ApiError("FORBIDDEN", "Client linkage data is missing for this legal matter.");
+      const hasSharedMatterAccess = await hasClientMatterShare(supabase, context, matterId);
+      if (!hasSharedMatterAccess) {
+        throw new ApiError("FORBIDDEN", "Client linkage data is missing for this legal matter.");
+      }
     }
 
     return {
@@ -363,15 +373,30 @@ async function loadProceedingRows(
   throw error;
 }
 
-function enforceClientPortalScope(role: string, userId: string, clientJoin: unknown) {
-  if (normalizePlatformRole(role) !== "client_portal") {
-    return;
+async function hasClientMatterShare(
+  supabase: ReturnType<typeof createSupabaseAdmin>,
+  context: Awaited<ReturnType<typeof getAuthContext>>,
+  matterId: string,
+) {
+  const { data, error } = await supabase
+    .from("matter_access_entries")
+    .select("id")
+    .eq("account_id", context.accountId)
+    .eq("legal_matter_id", matterId)
+    .eq("user_id", context.userId)
+    .eq("access_role", "client_access")
+    .eq("status", "active")
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (error) {
+    if (isSchemaDriftError(error)) {
+      return false;
+    }
+    throw error;
   }
 
-  const client = extractClient(clientJoin);
-  if (!client || client.userId !== userId) {
-    throw new ApiError("FORBIDDEN", "Clients can only access their own legal matters.");
-  }
+  return Boolean(data);
 }
 
 function groupByProceedingId(rows: Array<Record<string, unknown>>) {

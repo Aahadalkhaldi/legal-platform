@@ -52,11 +52,11 @@ export default function Home() {
                 <ShieldCheck size={18} />
                 فحص API
               </a>
-              <Link className="button button-secondary" href="/portal/admin">
+              <Link className="button button-secondary" href="/admin/dashboard">
                 <BriefcaseBusiness size={18} />
                 Admin Portal
               </Link>
-              <Link className="button button-secondary" href="/portal/client">
+              <Link className="button button-secondary" href="/client/dashboard">
                 <MessageSquareText size={18} />
                 Client Portal
               </Link>

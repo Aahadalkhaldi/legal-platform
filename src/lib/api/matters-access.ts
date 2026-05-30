@@ -131,7 +131,8 @@ async function resolveMatterAccess(
   }
 
   if (normalizePlatformRole(context.role) === "client_portal") {
-    if (!clientJoin || clientJoin.user_id !== context.userId) {
+    const hasSharedMatterAccess = assignment?.accessRole === "client_access";
+    if (!hasSharedMatterAccess && (!clientJoin || clientJoin.user_id !== context.userId)) {
       await writeMatterAccessDeniedAudit(supabase, context, matterId, "Client portal user is not linked to the matter client.");
       throw new ApiError("FORBIDDEN", "Client portal users can only access their linked legal matters.");
     }
