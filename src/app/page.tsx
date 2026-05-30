@@ -52,6 +52,14 @@ export default function Home() {
                 <ShieldCheck size={18} />
                 فحص API
               </a>
+              <Link className="button button-secondary" href="/portal/admin">
+                <BriefcaseBusiness size={18} />
+                Admin Portal
+              </Link>
+              <Link className="button button-secondary" href="/portal/client">
+                <MessageSquareText size={18} />
+                Client Portal
+              </Link>
               <Link className="button button-secondary" href="/matters">
                 <BriefcaseBusiness size={18} />
                 Matters Lifecycle

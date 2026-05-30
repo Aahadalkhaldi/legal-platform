@@ -1,10 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, type CSSProperties, useEffect, useMemo, useState } from "react";
+import { FormEvent, type CSSProperties, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { KeyRound, LoaderCircle, LogIn } from "lucide-react";
+import { requestApiWithSession } from "@/lib/api/browser-client";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { normalizePlatformRole } from "@/lib/access-control";
+
+type MeResponse = {
+  data: {
+    onboardingRequired?: boolean;
+    role?: string;
+  };
+};
 
 export default function LoginClient() {
   const router = useRouter();
@@ -16,7 +25,29 @@ export default function LoginClient() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const configurationError = !supabase ? "Supabase public configuration is missing." : null;
 
-  const nextPath = safeNextPath(searchParams.get("next"));
+  const requestedNextPath = safeNextPath(searchParams.get("next"));
+
+  const resolvePostLoginPath = useCallback(async () => {
+    if (requestedNextPath) {
+      return requestedNextPath;
+    }
+
+    if (!supabase) {
+      return "/matters";
+    }
+
+    try {
+      const mePayload = await requestApiWithSession<MeResponse>(supabase, "/api/v1/me");
+      if (mePayload.data.onboardingRequired) {
+        return "/matters";
+      }
+
+      const normalizedRole = normalizePlatformRole(mePayload.data.role ?? "client_portal");
+      return normalizedRole === "client_portal" ? "/portal/client" : "/portal/admin";
+    } catch {
+      return "/matters";
+    }
+  }, [requestedNextPath, supabase]);
 
   useEffect(() => {
     if (!supabase) return;
@@ -25,10 +56,11 @@ export default function LoginClient() {
       const { data, error } = await supabase.auth.getSession();
       if (error) return;
       if (data.session) {
-        router.replace(nextPath);
+        const destination = await resolvePostLoginPath();
+        router.replace(destination);
       }
     })();
-  }, [nextPath, router, supabase]);
+  }, [resolvePostLoginPath, router, supabase]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -55,7 +87,8 @@ export default function LoginClient() {
         await supabase.auth.setSession(data.session);
       }
 
-      router.replace(nextPath);
+      const destination = await resolvePostLoginPath();
+      router.replace(destination);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Unable to sign in.");
     } finally {
@@ -129,8 +162,8 @@ const inputStyle: CSSProperties = {
 };
 
 function safeNextPath(raw: string | null) {
-  if (!raw) return "/matters";
-  if (!raw.startsWith("/")) return "/matters";
-  if (raw.startsWith("//")) return "/matters";
+  if (!raw) return null;
+  if (!raw.startsWith("/")) return null;
+  if (raw.startsWith("//")) return null;
   return raw;
 }
